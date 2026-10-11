@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'clip_view.dart';
@@ -21,7 +22,18 @@ class _OutingsPanelState extends State<OutingsPanel> {
   List<dynamic> outings = [];
   Map<String, dynamic>? active, report, explanation, dayReport, dayExplanation;
   String? selected;
-  String mode = 'uploaded_audio';
+  String mode = 'live';
+  bool storeConsent = false;
+  Map<String, dynamic>? capture;
+  Timer? captureTimer;
+  bool polling = false;
+  static const captureLabels = {'waiting': 'Pi 연결 대기 · 아직 분석하지 않음',
+    'starting': '장치 준비 중 · 분석 결과 대기', 'capturing': '음성 분석 중',
+    'model_unavailable': '수집 중 · LSTM 모델 사용 불가',
+    'draining': '종료 처리 중 · 남은 분석과 사건 영상 저장',
+    'disconnected': 'Pi 연결 끊김 · 분석 상태 확인 불가',
+    'stopped': '수집 종료', 'failed': '수집 실패 · 확인 필요',
+    'clock_mismatch': 'Pi·PC 시각 차이 또는 연결 지연 · 시계 동기화 확인', 'manual': '수동 입력'};
   String error = '';
   bool busy = false;
   int generation = 0;
@@ -34,7 +46,7 @@ class _OutingsPanelState extends State<OutingsPanel> {
     final korea = started?.toUtc().add(const Duration(hours: 9));
     final when = korea == null ? (outing['started_at']?.toString() ?? '시각 없음')
       : '${korea.month}월 ${korea.day}일 ${korea.hour.toString().padLeft(2, '0')}:${korea.minute.toString().padLeft(2, '0')}';
-    const modes = {'uploaded_audio': '사용자 음원', 'prepared_video': '준비된 영상·음원',
+    const modes = {'live': '자동 관찰', 'uploaded_audio': '사용자 음원', 'prepared_video': '준비된 영상·음원',
       'synthetic_demo': '합성 시연'};
     return '$when · ${outing['status'] == 'active' ? '진행 중' : '종료'} · ${modes[outing['input_mode']] ?? outing['input_mode']}';
   }
@@ -43,7 +55,7 @@ class _OutingsPanelState extends State<OutingsPanel> {
     final korea = started?.toUtc().add(const Duration(hours: 9));
     final when = korea == null ? '시각 없음'
       : '${korea.month}/${korea.day} ${korea.hour.toString().padLeft(2, '0')}:${korea.minute.toString().padLeft(2, '0')}';
-    const modes = {'uploaded_audio': '음원', 'prepared_video': '준비 영상',
+    const modes = {'live': '자동 관찰', 'uploaded_audio': '음원', 'prepared_video': '준비 영상',
       'synthetic_demo': '합성'};
     return '$when · ${outing['status'] == 'active' ? '진행 중' : '종료'} · ${modes[outing['input_mode']] ?? '기타'}';
   }
@@ -67,18 +79,46 @@ class _OutingsPanelState extends State<OutingsPanel> {
   }
 
   @override
-  void initState() { super.initState(); load(); }
+  void initState() { super.initState(); load(); captureTimer = Timer.periodic(const Duration(seconds: 5), (_) => pollCapture()); }
   @override
   void didUpdateWidget(covariant OutingsPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.petId != widget.petId) {
       generation++;
-      outings = []; active = null; selected = null; report = null; explanation = null; dayReport = null; dayExplanation = null;
+      outings = []; active = null; selected = null; capture = null; storeConsent = false; report = null; explanation = null; dayReport = null; dayExplanation = null;
       load();
     } else if (oldWidget.observationId != widget.observationId) { load(); }
   }
   @override
-  void dispose() { question.dispose(); super.dispose(); }
+  void dispose() { captureTimer?.cancel(); question.dispose(); super.dispose(); }
+
+  Future<void> pollCapture() async {
+    if (polling || busy || active?['input_mode'] != 'live') return;
+    final id = active!['id'], pet = widget.petId;
+    polling = true;
+    try {
+      final value = await request('/capture/$id?$petQuery');
+      if (!mounted || widget.petId != pet || active?['id'] != id) return;
+      setState(() => capture = Map<String, dynamic>.from(value));
+      widget.onActiveChanged({...active!, 'capture_label': captureLabels[capture?['state']] ?? '상태 확인 중'});
+      if (['stopped', 'failed', 'clock_mismatch'].contains(capture?['state'])) {
+        await load();
+      } else if (selected == id) {
+        final latest = await request('/outings/$id/summary?$petQuery');
+        if (mounted && widget.petId == pet && selected == id) {
+          setState(() {
+            if (latest['sample_seconds'] != report?['sample_seconds']) explanation = null;
+            report = Map<String, dynamic>.from(latest);
+          });
+        }
+      }
+    } catch (_) {
+      if (mounted && widget.petId == pet && active?['id'] == id) {
+        setState(() => capture = {'state': 'disconnected'});
+        widget.onActiveChanged({...active!, 'capture_label': captureLabels['disconnected']});
+      }
+    } finally { polling = false; }
+  }
 
   Future<dynamic> request(String path, [Map<String, dynamic>? body]) async {
     final uri = Uri.parse('${widget.base}$path');
@@ -122,6 +162,7 @@ class _OutingsPanelState extends State<OutingsPanel> {
         explanation = null; dayExplanation = null;
         error = dayUnavailable ? '하루 요약을 불러오지 못했습니다. 외출 기록은 표시 중입니다.' : '';
       });
+      await pollCapture();
     } catch (e) { if (mounted && epoch == generation) setState(() => error = '외출 기록 조회 실패: $e'); }
   }
 
@@ -193,7 +234,8 @@ class _OutingsPanelState extends State<OutingsPanel> {
         _metric('카메라', '근거 장면 확인용')
       else
         _metric('판단 불가', '${data['unknown_seconds'] ?? 0}초'),
-      _metric('짖음 후보', '${data['bark_candidate_count'] ?? 0}회'),
+      _metric('에너지 기반 소리 후보', '${data['energy_bark_candidate_count'] ?? data['bark_candidate_count'] ?? 0}회'),
+      _metric('음성 LSTM 개 소리 후보', '${data['lstm_dog_window_count'] ?? 0}/${data['lstm_analyzed_window_count'] ?? 0}개 분석 창'),
     ]),
     if ((data['demo_sample_seconds'] as num? ?? 0) > 0) Padding(
       padding: const EdgeInsets.only(top: 8),
@@ -205,6 +247,9 @@ class _OutingsPanelState extends State<OutingsPanel> {
       style: Theme.of(context).textTheme.bodySmall),
     if (data['unobserved_seconds'] != null) Text('미관찰 ${data['unobserved_seconds']}초',
       style: Theme.of(context).textTheme.bodySmall),
+    if ((data['lstm_unavailable_seconds'] as num? ?? 0) > 0)
+      Text('LSTM 미분석 ${data['lstm_unavailable_seconds']}초 · 감지되지 않았다는 뜻이 아닙니다.',
+        style: Theme.of(context).textTheme.bodySmall),
     Text('중복·겹침 제외 ${(data['skipped_overlap_ids'] as List? ?? []).length}건 · 날짜 경계 제외 ${(data['excluded_day_boundary_ids'] as List? ?? []).length}건',
       style: Theme.of(context).textTheme.bodySmall),
     const SizedBox(height: 4),
@@ -222,22 +267,29 @@ class _OutingsPanelState extends State<OutingsPanel> {
         const SizedBox(height: 8),
         Text('외출 모드 · 귀가 리포트', style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 8),
-        Text('시작 버튼은 기록 묶음을 만듭니다. 카메라 자동 촬영을 시작하지 않습니다.',
+        Text('자동 관찰은 연결된 Pi에서 음성 분석과 사건 영상 저장을 시작합니다. 장비 응답 전에는 대기로 표시됩니다.',
           style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 20),
         if (active == null) Wrap(spacing: 12, crossAxisAlignment: WrapCrossAlignment.center, children: [
           DropdownButton<String>(value: mode, items: const [
+            DropdownMenuItem(value: 'live', child: Text('자동 관찰 · Pi 마이크')),
             DropdownMenuItem(value: 'uploaded_audio', child: Text('사용자 음원')),
             DropdownMenuItem(value: 'prepared_video', child: Text('준비된 영상·음원')),
             DropdownMenuItem(value: 'synthetic_demo', child: Text('합성 시연')),
           ], onChanged: busy ? null : (value) => setState(() => mode = value!)),
-          FilledButton(onPressed: busy ? null : () => run(() async {
-            final result = await request('/outings', {'pet_id': widget.petId, 'input_mode': mode, 'title': '외출 관찰'});
+          if (mode == 'live') SizedBox(width: 300, child: CheckboxListTile(
+            value: storeConsent, onChanged: busy ? null : (value) => setState(() => storeConsent = value ?? false),
+            title: const Text('외출 중 음성·사건 영상 저장 동의'), subtitle: const Text('기본 7일 보관 · 공통 모델 학습에 사용하지 않음'))),
+          FilledButton(onPressed: busy || (mode == 'live' && !storeConsent) ? null : () => run(() async {
+            final result = await request('/outings', {'pet_id': widget.petId, 'input_mode': mode, 'title': '외출 관찰',
+              if (mode == 'live') 'auto_capture': true, if (mode == 'live') 'store_consent': storeConsent});
+            capture = mode == 'live' ? {'state': 'waiting'} : null;
             selected = result['id']; await load();
           }), child: const Text('외출 시작')),
         ]),
         if (active != null) ...[
           Text('외출 진행 중 · ${active!['input_note']}'),
+          if (active!['input_mode'] == 'live') Text(captureLabels[capture?['state']] ?? '장치 상태 확인 중'),
           FilledButton(onPressed: busy ? null : () => run(() async {
             selected = active!['id']; await request('/outings/$selected/end?$petQuery', {}); await load();
           }), child: const Text('귀가 · 외출 종료')),
@@ -256,11 +308,13 @@ class _OutingsPanelState extends State<OutingsPanel> {
         TextButton(onPressed: busy ? null : load, child: const Text('외출 기록 새로고침')),
         const Divider(height: 32),
         AudioPanel(key: ValueKey(widget.petId), client: widget.client, base: widget.base,
+          allowUpload: active?['input_mode'] != 'live',
           petId: widget.petId, outing: active, onChanged: () { load(); }),
         if (report == null) const Text('외출을 시작하고 아래에서 관찰 입력을 추가해 주세요.'),
         if (report != null) ...[
           const SizedBox(height: 20),
           metrics(report!),
+          if (report!['unobserved_seconds'] != null) Text('미분석·관찰 공백 ${(report!['unobserved_seconds'] as num).toStringAsFixed(1)}초 · 조용했던 시간으로 해석하지 않습니다.'),
           const SizedBox(height: 24),
           TextField(controller: question, decoration: const InputDecoration(labelText: '외출 기록에 질문하기'), maxLength: 1000),
           Wrap(spacing: 8, children: [

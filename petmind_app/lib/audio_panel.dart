@@ -13,7 +13,8 @@ typedef AudioInputBuilder = Widget Function(
 
 class AudioPanel extends StatefulWidget {
   const AudioPanel({super.key, required this.client, required this.base, required this.petId,
-    required this.onChanged, this.outing, this.inputBuilder});
+    required this.onChanged, this.outing, this.inputBuilder, this.allowUpload = true});
+  final bool allowUpload;
   final http.Client client;
   final String base, petId;
   final Map<String, dynamic>? outing;
@@ -161,10 +162,11 @@ class _AudioPanelState extends State<AudioPanel> {
   Widget build(BuildContext context) => ExpansionTile(
     tilePadding: const EdgeInsets.symmetric(horizontal: 8),
     childrenPadding: const EdgeInsets.only(bottom: 8),
-    title: Text('사용자 음원 · 보호자 확인', style: Theme.of(context).textTheme.titleMedium),
-    subtitle: Text('30초 이하 WAV · 모델 학습 참여는 별도 선택',
+    title: Text(widget.allowUpload ? '사용자 음원 · 보호자 확인' : '자동 수집 음원 · 보호자 확인', style: Theme.of(context).textTheme.titleMedium),
+    subtitle: Text(widget.allowUpload ? '30초 이하 WAV · 모델 학습 참여는 별도 선택' : '수집한 소리를 확인하고 의견을 남기세요.',
       style: Theme.of(context).textTheme.bodySmall),children:[
     Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      if (widget.allowUpload) ...[
       KeyedSubtree(key: ValueKey(uploadRevision), child: (widget.inputBuilder ?? audioInput)(
         (name,data) { if (mounted) setState(() { filename = name; bytes = data; }); },
         (message) { if (mounted) setState(() => error = message); })),
@@ -184,6 +186,7 @@ class _AudioPanelState extends State<AudioPanel> {
         onChanged:busy ? null : (v) => setState(() => retention = v!)),
       const Text('원본 삭제 후에도 관찰 수치와 확인 의견은 남습니다. 현재는 로컬 단일 사용자용입니다.'),
       FilledButton(onPressed:busy || bytes == null || !store ? null : upload,child:const Text('음원 업로드·분석')),
+      ],
       TextButton(onPressed:busy ? null : load,child:const Text('음원 목록 새로고침')),
       TextButton(onPressed:busy ? null : () => setState(() => queueOnly = !queueOnly),
         child:Text(queueOnly ? '전체 음원 보기' : '확인 추천 ${reviewQueue.length}건 보기')),

@@ -1,5 +1,6 @@
 """Outing summaries: deterministic metrics, explicit source time, evidence-bound narration."""
 import json
+import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -17,12 +18,13 @@ KST = timezone(timedelta(hours=9))
 def outing_out(row):
     return {'id': row.id, 'pet_id': row.pet_id, 'title': row.title, 'input_mode': row.input_mode,
             'started_at': row.started_at.isoformat() + 'Z',
+            'store_consent_at': row.store_consent_at.isoformat() + 'Z' if row.store_consent_at else None,
             'ended_at': row.ended_at.isoformat() + 'Z' if row.ended_at else None,
             'status': 'ended' if row.ended_at else 'active',
             'input_note': {'synthetic_demo': '합성 시연이며 실제 외출 관찰이 아닙니다.',
                            'prepared_video': '준비된 파일 재생입니다. 실시간 카메라가 아닙니다.',
                            'uploaded_audio': '사용자가 올린 음원입니다. 실시간 녹음·자동 촬영이 아닙니다.',
-                           'live': '외부 관찰 입력용입니다. 외출 시작만으로 카메라가 켜지지 않습니다.'}[row.input_mode]}
+                           'live': 'Pi 장치 입력입니다. 자동 수집 여부는 장치 연결 상태를 확인하세요.'}[row.input_mode]}
 
 
 def require_outing(db, outing_id, pet_id):
@@ -117,6 +119,7 @@ def aggregate(db, rows, clip_start=None, clip_end=None):
         audio_by_id.update((a.observation_id, a) for a in db.scalars(
             select(AudioClipLog).where(AudioClipLog.observation_id.in_(chunk))))
     kept, skipped, boundaries, count, seconds = [], [], [], 0, 0.0
+    lstm_windows, lstm_dog_windows, lstm_unavailable_seconds = 0, 0, 0.0
     demo_ids, demo_seconds, scopes = [], 0.0, set()
     for row in rows:
         data = json.loads(row.context_json)
@@ -164,6 +167,15 @@ def aggregate(db, rows, clip_start=None, clip_end=None):
             demo_ids.append(row.id)
             demo_seconds += window
         count += data['bark']['count']
+        if audio:
+            analysis = json.loads(audio.analysis_json)
+            model = analysis.get('audio_lstm')
+            if model:
+                from pet_monitor.event_video import candidate_windows
+                lstm_windows += len(model.get('windows', []))
+                lstm_dog_windows += len(candidate_windows(analysis))
+            else:
+                lstm_unavailable_seconds += window
         motion = data['motion']['seconds_by_label']
         known = 0.0
         for label, value in motion.items():
@@ -188,6 +200,10 @@ def aggregate(db, rows, clip_start=None, clip_end=None):
             'seconds_by_label': {k: round(durations[k], 3) for k in sorted(LABELS)},
             'unknown_seconds': round(durations['unknown'], 3),
             'bark_candidate_count': count,
+            'energy_bark_candidate_count': count,
+            'lstm_analyzed_window_count': lstm_windows,
+            'lstm_dog_window_count': lstm_dog_windows,
+            'lstm_unavailable_seconds': round(lstm_unavailable_seconds, 3),
             'bark_candidates_per_minute': round(count*60/seconds, 3) if seconds else None,
             'sources': sorted({r.source for r in kept}), 'moments': moments,
             'measurement_note': '저장 구간 집계입니다. 중복·부분 겹침 구간은 전체 제외하며 전체 외출 활동량으로 추정하지 않습니다.'}
@@ -209,8 +225,14 @@ def summary_facts(current, scope='이번 외출에 연결된'):
               'observation_ids': ids, 'kind': 'summary'},
              {'id': 'current.unknown', 'text': '카메라는 원본 확인용이며 영상 행동 분석은 수행하지 않습니다.' if current.get('video_role') == 'evidence_only' else f"분석 표본 중 영상 판단 불가는 {current['unknown_seconds']:g}초입니다.",
               'observation_ids': ids, 'kind': 'quality'},
-             {'id': 'current.bark', 'text': f"중복 제외 저장 구간의 짖음 후보는 {current['bark_candidate_count']}회입니다.",
+             {'id': 'current.bark', 'text': f"중복 제외 저장 구간의 에너지 기반 짖음 후보는 {current['bark_candidate_count']}회입니다. 음성 LSTM의 개 소리 감지 창과 다른 지표입니다.",
               'observation_ids': ids, 'kind': 'bark'}]
+    if current['lstm_analyzed_window_count'] or current['lstm_unavailable_seconds']:
+        facts.append({'id': 'current.audio_lstm', 'kind': 'audio_lstm', 'observation_ids': ids,
+            'text': f"음성 LSTM이 분석한 창 {current['lstm_analyzed_window_count']}개 중 개 소리 후보 창은 {current['lstm_dog_window_count']}개입니다. 모델 미준비·실패 구간은 {current['lstm_unavailable_seconds']:g}초입니다. 5초 창은 정확한 발성 횟수가 아닙니다."})
+    if current.get('unobserved_seconds') is not None:
+        facts.append({'id': 'current.capture_gap', 'kind': 'quality', 'observation_ids': ids,
+            'text': f"외출 시간 중 분석되지 않은 시간은 {current['unobserved_seconds']:g}초이며 조용했던 시간으로 해석할 수 없습니다."})
     if current['demo_sample_seconds']:
         facts.append({'id': 'current.demo_scope', 'kind': 'provenance',
             'text': f"이 요약에는 공개·합성 시연 자료 {current['demo_sample_seconds']:g}초가 포함됩니다. 실제 반려견 관찰과 구분해야 합니다.",
@@ -229,6 +251,7 @@ def summary_facts(current, scope='이번 외출에 연결된'):
             facts.append({'id': f"guardian.{item['observation_id']}",
                 'text': f"관찰 #{item['observation_id']} {'시연 담당자 의견' if review.get('source') == 'demo_operator_opinion' else '보호자 의견'}: {labels[review['label']]}. {review.get('note', '')}",
                 'observation_ids': [item['observation_id']], 'kind': 'guardian_opinion',
+                'review_label': review['label'],
                 'review_source': review.get('source', 'guardian_opinion')})
     return facts
 
@@ -258,11 +281,28 @@ def facts_for_report(db, outing, question):
             facts.append({'id': 'comparison.bark_rate', 'kind': 'comparison',
                           'text': f"저장 구간의 분당 짖음 후보: 이번 {current['bark_candidates_per_minute']:g}회, 이전 {old['bark_candidates_per_minute']:g}회. 전체 외출이나 케어 효과를 비교한 수치는 아닙니다.",
                           'observation_ids': ids + old['counted_observation_ids']})
+    lowered = unicodedata.normalize('NFKC', question).lower()
+    if 'guardian_opinion' in question_intents(question) and any(
+            term in lowered for term in ('지난', '이전', '전보다', '비교', 'tv', '텔레비전', '티비')):
+        # A question about a prior confirmation must search prior sessions too.
+        # Bound both session count and facts while retaining pet/mode scoping.
+        past = db.scalars(select(OutingLog).where(
+            OutingLog.pet_id == outing.pet_id, OutingLog.ended_at.is_not(None),
+            OutingLog.ended_at <= outing.started_at, OutingLog.id != outing.id,
+            OutingLog.input_mode == outing.input_mode
+        ).order_by(OutingLog.ended_at.desc()).limit(5)).all()
+        for old_outing in past:
+            prior = old if previous and old_outing.id == previous.id else summary(db, old_outing)
+            for fact in summary_facts(prior):
+                if fact['kind'] == 'guardian_opinion':
+                    facts.append({**fact, 'id': f"previous.{old_outing.id}.{fact['id']}",
+                                  'text': f"이전 외출: {fact['text']}"})
     current['comparison'] = comparison
     # Retrieval is explicit, scoped to sessions; facts are precomputed, never model arithmetic.
     selected = select_facts(facts, question)
     if not ids:
-        selected = []
+        selected = [fact for fact in selected if fact['id'] == 'current.capture_gap' or
+                    fact['id'].startswith('previous.')]
     return current, selected
 
 
@@ -289,7 +329,7 @@ def explain_day(report, question, use_gemini=True):
 
 
 def narrate(report, facts, question, use_gemini=True, retrieval_mode='local', retrieval_error=None):
-    chosen, provider, failure = facts, 'grounded-template', None
+    chosen, provider, failure, selection_completed = facts, 'grounded-template', None, False
     if facts and use_gemini and settings.provider == 'gemini' and settings.gemini_api_key:
         import requests
         try:
@@ -313,16 +353,29 @@ def narrate(report, facts, question, use_gemini=True, retrieval_mode='local', re
             required_kinds = ({'quality'} | set(question_intents(question))) & {f['kind'] for f in facts}
             if any(f['kind'] == 'provenance' for f in facts):
                 required_kinds.add('provenance')
-            if not required_kinds.issubset({f['kind'] for f in chosen}):
-                # Do not let generation silently omit uncertainty or guardian
-                # evidence retrieved for a multi-part question.
-                chosen = facts
-                raise ValueError('incomplete evidence selection')
+            missing = required_kinds - {f['kind'] for f in chosen}
+            if missing:
+                # Fill mandatory claims with canonical server facts. Gemini
+                # chooses relevance but cannot conceal measured gaps or scope.
+                selection_completed = True
+                for fact in facts:
+                    if fact['kind'] in missing:
+                        chosen.append(fact)
+                        missing.remove(fact['kind'])
+                    if not missing:
+                        break
+                if len(chosen) > 8:
+                    chosen = [f for f in chosen if f['kind'] in required_kinds] + [
+                        f for f in chosen if f['kind'] not in required_kinds]
+                    chosen = chosen[:8]
+                if missing or not required_kinds.issubset({f['kind'] for f in chosen}):
+                    raise ValueError('incomplete evidence selection')
             provider = f'gemini:{settings.gemini_model}:fact-selection'
         except Exception as exc:
             provider, failure = 'grounded-template-fallback', type(exc).__name__
     return {'report': report, 'question': question, 'provider': provider, 'failure': failure,
             'retrieval_mode': retrieval_mode, 'retrieval_failure': retrieval_error,
+            'selection_completed': selection_completed,
             'claims': chosen, 'retrieved_fact_ids': [f['id'] for f in facts],
             'answer': '\n'.join(f['text'] for f in chosen) if chosen else '질문을 뒷받침할 외출 기록이 부족합니다.',
             'note': 'RAG는 검색된 사실을 선택하며 수치와 문장은 서버가 근거에서 렌더링합니다. 감정·질환·음악 효과를 판정하지 않습니다.'}

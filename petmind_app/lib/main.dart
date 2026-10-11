@@ -7,6 +7,7 @@ import 'package:flutter/semantics.dart';
 import 'package:http/http.dart' as http;
 import 'genesis_theme.dart';
 import 'outings_panel.dart';
+import 'camera_panel.dart';
 
 const String apiBase = String.fromEnvironment(
   'PETMIND_API_BASE',
@@ -61,6 +62,10 @@ class _DashboardPageState extends State<DashboardPage> {
   late final http.Client client;
   List<dynamic> actions = const [];
   bool connected = false;
+  int section = 0;
+  static const sectionNames = ['홈', '외출·음원', 'RAG·케어', '기록', '설정·시연'];
+  static const sectionIcons = [Icons.home_outlined, Icons.mic_none,
+    Icons.forum_outlined, Icons.history, Icons.settings_outlined];
   bool busy = false;
   String? connectionIssue;
   List<String> _optionalFailures = const [];
@@ -340,62 +345,64 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: refresh,
-        child: Center(child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1280),
-          child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-          children: [
+      body: Column(children: [
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Wrap(spacing: 8, runSpacing: 8, children: [
+            for (var i = 0; i < sectionNames.length; i++) ChoiceChip(
+              key: ValueKey('nav-$i'),
+              avatar: Icon(sectionIcons[i], size: 18),
+              label: Text(sectionNames[i]), selected: section == i,
+              onSelected: (_) => setState(() => section = i),
+            ),
+          ])),
+        Expanded(child: IndexedStack(index: section, children: [
+          _sectionPage(0, [
             _pageIntro(),
-            if (connectionIssue != null) ...[
-              const SizedBox(height: 20),
-              _connectionBanner(),
-            ],
-            const SizedBox(height: 32),
+            _overview(),
+            if (activeOuting?['input_mode'] == 'live') Text('자동 외출 · ${activeOuting?['capture_label'] ?? '장치 상태 확인 중'}'),
+            if (observation != null) Text('관찰 #${observation!['id']} · ${observation!['source']} · ${observation!['observed_at']}'),
+            if (section == 0) const CameraPanel(base: apiBase),
+            Wrap(spacing: 12, runSpacing: 8, children: [
+              OutlinedButton(onPressed: () => setState(() => section = 1), child: const Text('외출 기록·음원 분석으로')),
+              OutlinedButton(onPressed: () => setState(() => section = 2), child: const Text('근거 질문·케어로')),
+            ]),
+          ]),
+          _sectionPage(1, [
+            _sectionTitle('외출 기록과 음원 분석', '외출 시작, 음원 입력, 보호자 확인과 귀가 요약을 관리합니다.'),
             OutingsPanel(client: client, base: apiBase, petId: petId,
               observationId: observation?['id'] as int?,
-              onActiveChanged: (value) { activeOuting = value; }),
-            const SizedBox(height: 32),
-            _sectionTitle('관찰 입력과 분석', '시연 자료와 사용자 자료의 출처를 구분해 기록합니다.'),
-            const SizedBox(height: 16),
-            _inputCard(),
-            const SizedBox(height: 20),
-            _mediaCard(),
-            const SizedBox(height: 20),
-            _overview(),
-            const SizedBox(height: 32),
-            _sectionTitle('케어 제안과 근거', '보호자가 기록과 원본을 확인한 뒤 제안을 검토합니다.'),
-            const SizedBox(height: 16),
-            _suggestionCard(),
-            const SizedBox(height: 20),
-            _evidenceCard(),
-            const SizedBox(height: 20),
-            _actionHistory(),
-            const SizedBox(height: 20),
-            _timelineCard(),
-            const SizedBox(height: 20),
-            _comparisonCard(),
-            if (notice.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(notice, textAlign: TextAlign.center),
-            ],
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: busy || observation == null ? null : evaluate,
-              icon: busy
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.psychology_alt),
-              label: const Text('현재 상태 평가하기'),
-            ),
-          ],
-        ))),
-      ),
+              onActiveChanged: (value) { if (mounted) setState(() => activeOuting = value); }),
+          ]),
+          _sectionPage(2, [
+            _sectionTitle('RAG 질문과 케어', '저장된 관찰과 보호자 의견을 근거로 제안을 검토합니다.'),
+            TextField(controller: question, decoration: const InputDecoration(labelText: '기록에 대해 질문하기'), maxLength: 1000),
+            FilledButton.icon(onPressed: busy || observation == null ? null : evaluate,
+              icon: const Icon(Icons.psychology_alt), label: const Text('현재 상태 평가하기')),
+            _suggestionCard(), _evidenceCard(), _comparisonCard(),
+          ]),
+          _sectionPage(3, [
+            _sectionTitle('처리 기록', '관찰·제안·승인 이력을 확인합니다.'),
+            _timelineCard(), _actionHistory(),
+          ]),
+          _sectionPage(4, [
+            _sectionTitle('반려견 설정과 시연', '프로필을 관리하고 별도로 표시된 시연 자료를 사용합니다.'),
+            _inputCard(), _mediaCard(),
+          ]),
+        ])),
+      ]),
     );
   }
+
+  Widget _sectionPage(int index, List<Widget> children) => RefreshIndicator(
+    onRefresh: refresh,
+    child: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 1280),
+      child: ListView(key: PageStorageKey('section-$index'),
+        padding: const EdgeInsets.all(24), children: [
+          if (connectionIssue != null) ...[_connectionBanner(), const SizedBox(height: 16)],
+          for (final child in children) ...[child, const SizedBox(height: 20)],
+          if (notice.isNotEmpty) Text(notice),
+        ]))),
+  );
 
   Widget _pageIntro() => LayoutBuilder(builder: (context, constraints) {
     final compact = constraints.maxWidth < 640;
@@ -465,7 +472,6 @@ class _DashboardPageState extends State<DashboardPage> {
           Text(profile == null ? '프로필 미등록' : '${profile!['name']} · ${profile!['age_years'] ?? '-'}세 · 보호자 입력'),
           TextButton(onPressed: busy ? null : editProfile, child: const Text('프로필·메모 편집')),
         ]),
-        TextField(controller: question, decoration: const InputDecoration(labelText: '기록에 대해 질문하기'), maxLength: 1000),
         const SizedBox(height: 12),
         Wrap(spacing: 8, runSpacing: 8, children: [
           OutlinedButton(onPressed: busy ? null : seedHistory, child: const Text('합성 과거 기록 준비')),
@@ -601,17 +607,15 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _overview() {
     final context = observation?['context'] as Map<String, dynamic>? ?? const {};
-    final motion = context['motion'] as Map<String, dynamic>? ?? const {};
     final bark = context['bark'] as Map<String, dynamic>? ?? const {};
-    final behavior = motion['dominant']?.toString() ?? '데이터 없음';
     return LayoutBuilder(builder: (_, constraints) {
       final width = constraints.maxWidth >= 760 ? (constraints.maxWidth - 24) / 3 : constraints.maxWidth;
       return Wrap(
         spacing: 12,
         runSpacing: 12,
         children: [
-          _metricCard(width, '현재 궤적', behavior,
-            context['motion_model'] == 'lstm_synthetic' ? '분석: LSTM 특징 v${context['lstm_metadata']?['feature_version'] ?? 1} · 실제 정확도 미검증' : '분석: 규칙 기반 · 동작 정확도 평가 전', Icons.visibility),
+          _metricCard(width, '최근 관찰', observation == null ? '데이터 없음' : '#${observation!['id']}',
+            observation == null ? '외출·음원에서 관찰을 추가해 주세요.' : '출처: ${observation!['source']} · 저장된 최근 기록', Icons.description_outlined),
           _metricCard(
             width,
             '처리 실적',
@@ -622,7 +626,7 @@ class _DashboardPageState extends State<DashboardPage> {
           _metricCard(
             width,
             '음성 신호',
-            observation == null ? '데이터 없음' : '짖음 후보 ${bark['count'] ?? 0}회',
+            observation == null ? '데이터 없음' : '에너지 기반 소리 후보 ${bark['count'] ?? 0}회',
             '에너지 기반 · 최대 ${bark['peak_db'] ?? '-'} dBFS',
             Icons.graphic_eq,
           ),

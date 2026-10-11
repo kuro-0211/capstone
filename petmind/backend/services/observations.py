@@ -39,7 +39,7 @@ def save(db, data: ObservationIn, media=None, commit=True):
             db.rollback()
             raise HTTPException(409, '종료된 외출에는 관찰을 추가할 수 없습니다.')
     b, m = data.context.bark, data.context.motion
-    summary = (f'{data.context.window_s:g}초 관찰: 짖음 후보 {b.count}회, '
+    summary = (f'{data.context.window_s:g}초 관찰: 에너지 기반 소리 후보 {b.count}회, '
                f'주된 궤적 {MOTION_LABELS_KO[m.dominant]}.')
     if data.source in {'user_audio','live'} and '영상 자동 행동 분석 없음' in data.context.input_note:
         summary = f'{data.context.window_s:g}초 음성 관찰: 에너지 소리 후보 {b.count}회. 개 소리 여부는 음성 LSTM 점수와 보호자 확인을 참고합니다.'

@@ -26,6 +26,20 @@ def test_public_demo_operator_note_is_not_a_guardian_confirmation():
     assert select_facts(facts[:1], '보호자가 TV라고 확인한 것은?') == []
 
 
+def test_tv_confirmation_uses_matching_review_label_across_sessions():
+    facts = [{'id': 'guardian.2', 'kind': 'guardian_opinion',
+              'review_source': 'guardian_opinion', 'review_label': 'pet_vocalization',
+              'text': '반려견 소리'},
+             {'id': 'previous.old.guardian.1', 'kind': 'guardian_opinion',
+              'review_source': 'guardian_opinion', 'review_label': 'external_or_tv',
+              'text': '이전 외출 TV 소리'}]
+    selected = select_facts(facts, '보호자가 TV라고 확인한 것은?')
+    assert [item['id'] for item in selected] == ['previous.old.guardian.1']
+    assert select_facts(facts[:1], '보호자가 TV라고 확인한 것은?') == []
+    assert [item['id'] for item in select_facts(facts, '보호자가 ＴＶ 소리라고 확인한 것은?')] == [
+        'previous.old.guardian.1']
+
+
 def test_question_normalization_and_sound_uncertainty():
     facts = [{'id': 'b', 'kind': 'bark'}, {'id': 'q', 'kind': 'quality'},
              {'id': 'g', 'kind': 'guardian_opinion'}, {'id': 's', 'kind': 'summary'}]
@@ -55,5 +69,6 @@ def test_generated_selection_cannot_hide_quality(monkeypatch):
     facts = [{'id': 'b', 'kind': 'bark', 'text': '짖음 후보 3회', 'observation_ids': [1]},
              {'id': 'q', 'kind': 'quality', 'text': '영상 판단 불가 10초', 'observation_ids': [1]}]
     response = outings.narrate({}, facts, '소리를 설명해 주세요')
-    assert response['provider'] == 'grounded-template-fallback'
+    assert response['provider'].startswith('gemini:')
+    assert response['selection_completed'] is True
     assert response['claims'] == facts

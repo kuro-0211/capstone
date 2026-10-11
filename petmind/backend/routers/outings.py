@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from typing import Literal
 
-from ..database import (ObservationLog, ObservationMedia, OutingLog, get_db, utcnow)
+from ..database import (ObservationLog, ObservationMedia, OutingLog, CaptureJob, get_db, utcnow)
 from ..schemas import StrictModel
 from ..settings import ROOT
 from ..services import outings
@@ -25,6 +25,8 @@ class StartRequest(StrictModel):
     pet_id: str = Field(min_length=1, max_length=80)
     title: str = Field(default='외출 관찰', min_length=1, max_length=100)
     input_mode: Literal['synthetic_demo', 'prepared_video', 'live', 'uploaded_audio'] = 'synthetic_demo'
+    auto_capture: bool = False
+    store_consent: bool = False
 
 
 class ExplainRequest(StrictModel):
@@ -34,9 +36,16 @@ class ExplainRequest(StrictModel):
 
 @router.post('', status_code=201)
 def start(data: StartRequest, db=Depends(get_db)):
-    row = OutingLog(id=uuid.uuid4().hex, **data.model_dump())
+    if data.auto_capture and (data.input_mode != 'live' or not data.store_consent):
+        raise HTTPException(422, '자동 수집은 live 입력과 음성·사건 영상 저장 동의가 필요합니다.')
+    row = OutingLog(id=uuid.uuid4().hex,
+                    store_consent_at=utcnow() if data.store_consent else None,
+                    **data.model_dump(exclude={'auto_capture', 'store_consent'}))
     db.add(row)
     try:
+        if data.auto_capture:
+            db.flush()
+            db.add(CaptureJob(outing_id=row.id, pet_id=row.pet_id))
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -145,6 +154,15 @@ def get_outing(outing_id: str, pet_id: str, db=Depends(get_db)):
 @router.post('/{outing_id}/end')
 def end(outing_id: str, pet_id: str, db=Depends(get_db)):
     row = outings.require_outing(db, outing_id, pet_id)
+    job = db.get(CaptureJob, outing_id)
+    if job and not row.ended_at:
+        from .capture import status
+        job.stop_requested = True
+        if job.owner and status(job)['state'] not in {'disconnected', 'stopped', 'failed', 'clock_mismatch'}:
+            job.state = 'draining'
+            db.commit()
+            return {**outings.outing_out(row), 'capture': status(job)}
+        job.state = 'failed' if job.owner else 'stopped'
     db.execute(update(OutingLog).where(OutingLog.id == outing_id, OutingLog.ended_at.is_(None))
                .values(ended_at=utcnow()))
     db.commit()
@@ -154,7 +172,12 @@ def end(outing_id: str, pet_id: str, db=Depends(get_db)):
 
 @router.get('/{outing_id}/summary')
 def get_summary(outing_id: str, pet_id: str, db=Depends(get_db)):
-    return outings.summary(db, outings.require_outing(db, outing_id, pet_id))
+    row = outings.require_outing(db, outing_id, pet_id)
+    result = outings.summary(db, row)
+    if db.get(CaptureJob, outing_id):
+        from .capture import status
+        result['capture'] = status(db.get(CaptureJob, outing_id))
+    return result
 
 
 @router.post('/{outing_id}/explain')

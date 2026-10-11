@@ -2,11 +2,14 @@
 import json
 import asyncio
 import uuid
+import ipaddress
+import re
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, Query, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select, text
 
@@ -22,6 +25,8 @@ from .routers.comparisons import router as comparisons_router
 from .routers.outings import router as outings_router
 from .routers.audio_clips import router as audio_clips_router
 from .routers.event_videos import router as event_videos_router
+from .routers.camera import router as camera_router
+from .routers.capture import router as capture_router
 from .schemas import DemoRequest, ObservationIn, ObservationOut
 from .services.observations import save, to_out
 from .services.audio_retention import cleanup_once, cleanup_loop
@@ -43,6 +48,25 @@ async def lifespan(app):
 
 
 app = FastAPI(title='PetMind integrated API', version='0.3.0', lifespan=lifespan)
+
+
+@app.middleware('http')
+async def local_preview_boundary(request: Request, call_next):
+    """This unauthenticated prototype must remain on loopback/SSH tunnels."""
+    host = request.client.host if request.client else ''
+    try:
+        local_client = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        local_client = host == 'testclient'
+    origin = request.headers.get('origin')
+    local_origin = not origin or bool(re.fullmatch(
+        r'http://(?:localhost|127\.0\.0\.1)(?::\d+)?', origin))
+    if not local_client or not local_origin:
+        return JSONResponse({'detail': 'PetMind 시제품은 로컬/SSH 연결에서만 접근할 수 있습니다.'},
+                            status_code=403)
+    return await call_next(request)
+
+
 app.add_middleware(CORSMiddleware, allow_origin_regex=r'http://(localhost|127\.0\.0\.1)(:\d+)?',
                    allow_methods=['GET', 'POST'], allow_headers=['Content-Type'])
 app.include_router(care_router)
@@ -53,6 +77,8 @@ app.include_router(comparisons_router)
 app.include_router(outings_router)
 app.include_router(audio_clips_router)
 app.include_router(event_videos_router)
+app.include_router(camera_router)
+app.include_router(capture_router)
 
 
 @app.get('/health')

@@ -9,6 +9,44 @@ import 'package:petmind_app/main.dart';
 import 'package:petmind_app/genesis_theme.dart';
 
 void main() {
+  testWidgets('sections isolate content and preserve question; leaving home closes camera', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = MockClient((request) async {
+      final path = request.url.path;
+      final dynamic data = path == '/care/latest' || path.endsWith('/profile') ? null
+        : path == '/metrics' || path == '/media/catalog' ? {}
+        : path == '/outings/day' ? {'moments': [], 'sample_seconds': 0, 'unknown_seconds': 0}
+        : path == '/audio-clips/review-queue' ? {'items': []} : [];
+      return http.Response(jsonEncode(data), 200);
+    });
+    await tester.pumpWidget(MaterialApp(home: DashboardPage(client: client)));
+    await tester.pumpAndSettle();
+    expect(find.text('최근 관찰'), findsOneWidget);
+    expect(find.text('외출 시작'), findsNothing);
+    expect(find.text('휴식 시연'), findsNothing);
+    await tester.tap(find.text('카메라 화면 열기'));
+    await tester.pumpAndSettle();
+    expect(find.text('카메라 화면 닫기'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('nav-2')));
+    await tester.pumpAndSettle();
+    expect(find.text('실시간 카메라'), findsNothing);
+    await tester.enterText(find.byType(TextField), '지난번과 비교해 줘');
+    await tester.tap(find.byKey(const ValueKey('nav-3')));
+    await tester.pumpAndSettle();
+    expect(find.text('전체 처리 타임라인'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('nav-2')));
+    await tester.pumpAndSettle();
+    expect(find.text('지난번과 비교해 줘'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('nav-0')));
+    await tester.pumpAndSettle();
+    expect(find.text('카메라 화면 열기'), findsOneWidget);
+    expect(find.text('카메라 화면 닫기'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('audio outing reports its actual mode when another input is chosen', (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1;
@@ -33,6 +71,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: DashboardPage(client: client)));
     await tester.pumpAndSettle();
     final scenario = find.text('휴식 시연');
+    await tester.tap(find.byKey(const ValueKey('nav-4')));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(scenario);
     await tester.tap(scenario);
     await tester.pumpAndSettle();
@@ -204,6 +244,10 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme: GenesisTheme.light,
       home: DashboardPage(client: client)));
     await tester.pumpAndSettle();
+    expect(find.text('최근 카메라 장면'), findsOneWidget);
+    expect(find.text('현재 상태 평가하기'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('nav-1')));
+    await tester.pumpAndSettle();
     expect(find.textContaining('10/11 16:44 · 종료 · 음원'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.drag(find.byType(ListView).first, const Offset(0, -500));
@@ -224,6 +268,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: DashboardPage(client: client)));
     await tester.pumpAndSettle();
     expect(find.text('데이터 없음'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('nav-2')));
+    await tester.pumpAndSettle();
     final button = tester.widget<FilledButton>(find.ancestor(
       of: find.text('현재 상태 평가하기'), matching: find.byWidgetPredicate((widget) => widget is FilledButton)));
     expect(button.onPressed, isNull);
@@ -275,7 +321,11 @@ void main() {
     });
     await tester.pumpWidget(MaterialApp(home: DashboardPage(client: client)));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nav-4')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('회전·짖음 시연'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nav-2')));
     await tester.pumpAndSettle();
     expect(find.textContaining('#3 · 과거 관찰'), findsOneWidget);
     final approval = find.text('가상 음악 실행 승인');

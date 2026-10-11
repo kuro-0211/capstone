@@ -7,7 +7,7 @@ import numpy as np
 
 from sqlalchemy import case, func, select
 
-from ..database import CareActionLog, CareSuggestionLog, FeedbackLog, ObservationLog
+from ..database import AudioClipLog, CareActionLog, CareSuggestionLog, FeedbackLog, ObservationLog
 from . import embeddings
 
 
@@ -50,6 +50,20 @@ def search_result(db, pet_id, before, query, days=7, limit=5, start=None, semant
             FeedbackLog.observation_id == row.id, FeedbackLog.created_at < utc(before)
         ).order_by(FeedbackLog.created_at.desc()).limit(2)).all()
         feedback_data = [json.loads(item.feedback_json) for item in feedback]
+        audio = db.scalars(select(AudioClipLog).where(
+            AudioClipLog.observation_id == row.id, AudioClipLog.pet_id == pet_id)).first()
+        input_scope = row.source
+        if audio:
+            analysis = json.loads(audio.analysis_json)
+            if analysis.get('demo_source'):
+                input_scope = 'public_demo'
+            review = json.loads(audio.review_json)
+            reviewed_at = review.get('updated_at')
+            if reviewed_at and utc(reviewed_at) < utc(before):
+                feedback_data.append({'observation_id': row.id,
+                    'label': review.get('label'), 'note': review.get('note', ''),
+                    'source': review.get('source', 'guardian_opinion'),
+                    'reviewed_at': reviewed_at})
         suggestions = db.scalars(select(CareSuggestionLog).where(
             CareSuggestionLog.observation_id == row.id, CareSuggestionLog.created_at < utc(before)
         ).order_by(CareSuggestionLog.created_at.desc()).limit(2)).all()
@@ -67,7 +81,8 @@ def search_result(db, pet_id, before, query, days=7, limit=5, start=None, semant
                 json.dumps({'feedback': feedback_data, 'care': care}, ensure_ascii=False)).lower()
         score = sum(token in text for token in tokens)
         scored.append({'row': row, 'data': data, 'text': text, 'lexical': score,
-                       'semantic': None, 'feedback': feedback_data, 'care': care})
+                       'semantic': None, 'feedback': feedback_data, 'care': care,
+                       'input_scope': input_scope})
     diagnostics = {'method': 'lexical', 'candidate_count': len(scored), 'semantic_candidate_limit': 100,
                    'recency_context_only': generic, 'semantic_threshold': .55}
     if generic:
@@ -97,6 +112,7 @@ def search_result(db, pet_id, before, query, days=7, limit=5, start=None, semant
                         'source': row.source, 'summary': row.summary, 'context': data,
                         'relevance': item['lexical'], 'semantic_similarity': item['semantic'],
                         'match_type': 'recent_context' if generic else 'topic_match',
+                        'input_scope': item['input_scope'],
                         'guardian_feedback': item['feedback'], 'care_outcomes': item['care']})
     return {'records': results, 'search': diagnostics}
 

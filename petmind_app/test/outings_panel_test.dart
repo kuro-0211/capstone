@@ -111,7 +111,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('new outing starts in audio mode for the current demo flow', (tester) async {
+  testWidgets('automatic outing requires consent and waits for Pi', (tester) async {
     tester.view.physicalSize = const Size(1200, 1800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -122,9 +122,11 @@ void main() {
     final client = MockClient((request) async {
       final path = request.url.path;
       if (path == '/outings' && request.method == 'POST') {
-        expect(jsonDecode(request.body)['input_mode'], 'uploaded_audio');
+        expect(jsonDecode(request.body)['input_mode'], 'live');
+        expect(jsonDecode(request.body)['auto_capture'], isTrue);
+        expect(jsonDecode(request.body)['store_consent'], isTrue);
         started = {'id': 'outing-audio', 'status': 'active',
-          'input_mode': 'uploaded_audio', 'input_note': '사용자 음원',
+          'input_mode': 'live', 'input_note': 'Pi 장치 입력',
           'started_at': '2026-10-11T08:00:00Z'};
         return http.Response(jsonEncode(started), 201,
           headers: {'content-type': 'application/json; charset=utf-8'});
@@ -139,19 +141,24 @@ void main() {
       child: OutingsPanel(client: client, base: 'http://localhost',
         petId: 'demo-dog', onActiveChanged: (_) {})))));
     await tester.pumpAndSettle();
-    expect(find.text('사용자 음원'), findsOneWidget);
+    expect(find.text('자동 관찰 · Pi 마이크'), findsOneWidget);
+    final startButton = find.widgetWithText(FilledButton, '외출 시작');
+    expect(tester.widget<FilledButton>(startButton).onPressed, isNull);
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('외출 시작'));
     await tester.pumpAndSettle();
-    expect(started?['input_mode'], 'uploaded_audio');
+    expect(started?['input_mode'], 'live');
     expect(find.textContaining('외출 진행 중'), findsOneWidget);
+    expect(find.text('Pi 연결 대기 · 아직 분석하지 않음'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('HTML server error shows a readable outings retry message', (tester) async {
     final client = MockClient((_) async => http.Response('<html>proxy error</html>', 502));
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: OutingsPanel(
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(child: OutingsPanel(
       client: client, base: 'http://localhost', petId: 'demo-dog',
-      onActiveChanged: (_) {}))));
+      onActiveChanged: (_) {})))));
     await tester.pumpAndSettle();
     expect(find.textContaining('HTTP 502'), findsOneWidget);
     expect(find.textContaining('proxy error'), findsNothing);
@@ -182,6 +189,8 @@ void main() {
         petId: 'demo-dog', onActiveChanged: (_) {})))));
     await tester.pumpAndSettle();
     expect(find.text('분석 표본'), findsOneWidget);
+    expect(find.text('에너지 기반 소리 후보'), findsOneWidget);
+    expect(find.text('음성 LSTM 개 소리 후보'), findsOneWidget);
     expect(find.text('5초'), findsWidgets);
     expect(find.textContaining('외출 기록은 표시 중'), findsOneWidget);
     dayOnline = true;

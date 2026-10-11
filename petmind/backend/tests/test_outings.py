@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from .test_flow import client
-from ..database import ObservationLog, ObservationMedia, OutingLog
+from ..database import AudioClipLog, ObservationLog, ObservationMedia, OutingLog
 from ..services import outings
 from ..routers import outings as routes
 
@@ -47,6 +47,31 @@ def test_lifecycle_legacy_and_isolation(client):
     assert client.post('/demo/observe', json={'pet_id': 'dog-a', 'outing_id': oid}).status_code == 409
     assert start(client) != oid
     assert client.post('/demo/observe', json={'pet_id': 'legacy'}).json()['outing_id'] is None
+
+
+def test_energy_candidates_and_lstm_windows_are_separate_metrics(client):
+    oid = start(client)
+    observation = observe(client, oid)
+    with client.sessions() as db:
+        row = db.get(ObservationLog, observation['id'])
+        duration = json.loads(row.context_json)['window_s']
+        db.add(AudioClipLog(id='metric-audio', pet_id='dog-a', observation_id=row.id,
+            filename='missing.wav', sha256='a'*64, duration_s=duration,
+            training_consent=0, expires_at=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(days=7),
+            analysis_json=json.dumps({'audio_lstm': {'threshold': .7, 'windows': [
+                {'start_s': 0, 'end_s': 1, 'dog_score': .8},
+                {'start_s': 1, 'end_s': 2, 'dog_score': .2}]}})))
+        db.commit()
+    report = client.get(f'/outings/{oid}/summary?pet_id=dog-a').json()
+    assert report['energy_bark_candidate_count'] == report['bark_candidate_count']
+    assert report['lstm_analyzed_window_count'] == 2
+    assert report['lstm_dog_window_count'] == 1
+    assert report['lstm_unavailable_seconds'] == 0
+    claims = client.post(f'/outings/{oid}/explain', json={'pet_id': 'dog-a'}).json()['claims']
+    assert '에너지 기반' in next(c['text'] for c in claims if c['id'] == 'current.bark')
+    model_claims = client.post(f'/outings/{oid}/explain', json={
+        'pet_id': 'dog-a', 'question': 'LSTM 개 소리 후보 창은 몇 개야?'}).json()['claims']
+    assert any(c['id'] == 'current.audio_lstm' and '1개' in c['text'] for c in model_claims)
 
 
 def test_old_cited_observation_evidence_can_be_opened_across_outings(client, tmp_path, monkeypatch):
@@ -169,6 +194,32 @@ def test_comparison_scoped_and_no_unsupported_question(client):
     assert set(comparison['observation_ids']) == {old['id'], now['id']}
     assert distractor['id'] not in comparison['observation_ids']
     assert client.post(f'/outings/{current}/explain', json={'pet_id': 'dog-a', 'question': '내일 날씨는?'}).json()['claims'] == []
+
+
+def test_prior_tv_review_cited_without_current_pet_sound_confusion(client):
+    first = start(client)
+    old = observe(client, first)
+    client.post(f'/outings/{first}/end?pet_id=dog-a')
+    second = start(client)
+    now = observe(client, second)
+    with client.sessions() as db:
+        for index, observation, label in ((1, old, 'external_or_tv'),
+                                          (2, now, 'pet_vocalization')):
+            db.add(AudioClipLog(id=f'rag-audio-{index}', pet_id='dog-a',
+                observation_id=observation['id'], filename='unused.wav',
+                sha256=str(index)*64, duration_s=30, training_consent=0,
+                expires_at=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(days=7),
+                analysis_json='{}', review_json=json.dumps({'label':label,
+                    'source':'guardian_opinion','note':'isolated test'})))
+        db.commit()
+    result=client.post(f'/outings/{second}/explain',json={'pet_id':'dog-a',
+        'question':'보호자가 TV라고 확인한 것은?'}).json()
+    assert [c['observation_ids'] for c in result['claims']] == [[old['id']]]
+    assert 'TV·외부 소리' in result['answer']
+    assert now['id'] not in {i for c in result['claims'] for i in c['observation_ids']}
+    fullwidth=client.post(f'/outings/{second}/explain',json={'pet_id':'dog-a',
+        'question':'보호자가 ＴＶ 소리라고 확인한 것은?'}).json()
+    assert [c['observation_ids'] for c in fullwidth['claims']] == [[old['id']]]
 
 
 def test_mcp_outing_roundtrip_and_invalid_generated_fact(client, monkeypatch):

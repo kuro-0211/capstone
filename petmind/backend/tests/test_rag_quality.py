@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 
 from .test_flow import client, observe
-from petmind.backend.database import FeedbackLog
+from petmind.backend.database import AudioClipLog, FeedbackLog
 from petmind.backend.services import retrieval
 from petmind.backend.services.query_plan import plan_query
 
@@ -45,6 +45,28 @@ def test_feedback_is_searchable_and_future_feedback_excluded(client):
         db.commit()
         assert retrieval.search_observations(db, 'dog-a', now.isoformat(), 'doorbell')[0]['id'] == record['id']
         assert retrieval.search_observations(db, 'dog-a', now.isoformat(), 'fireworks') == []
+
+
+def test_audio_review_is_searchable_with_provenance_and_time_scope(client):
+    import json
+    now = datetime.now(timezone.utc)
+    record = observe(client, when=(now-timedelta(days=1)).isoformat())
+    with client.sessions() as db:
+        row = AudioClipLog(id='review-audio', pet_id='dog-a', observation_id=record['id'],
+            filename='unused.wav', sha256='0'*64, duration_s=5, training_consent=0,
+            expires_at=now.replace(tzinfo=None)+timedelta(days=6),
+            analysis_json=json.dumps({'demo_source':'isolated test'}),
+            review_json=json.dumps({'label':'external_or_tv', 'note':'TV로 확인',
+                'source':'demo_operator_opinion',
+                'updated_at':(now-timedelta(hours=1)).isoformat()}))
+        db.add(row); db.commit()
+        matched = retrieval.search_result(db, 'dog-a', now.isoformat(), 'TV로 확인')
+        assert [r['id'] for r in matched['records']] == [record['id']]
+        assert matched['records'][0]['input_scope'] == 'public_demo'
+        assert matched['records'][0]['guardian_feedback'][0]['source'] == 'demo_operator_opinion'
+        assert retrieval.search_result(db, 'dog-a', (now-timedelta(hours=2)).isoformat(),
+            'TV로 확인')['records'] == []
+        assert retrieval.search_result(db, 'other-dog', now.isoformat(), 'TV로 확인')['records'] == []
 
 
 def test_semantics_filtered_before_embedding_and_failures_explicit(client, monkeypatch):

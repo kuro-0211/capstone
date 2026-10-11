@@ -74,6 +74,9 @@ def main():
     parser.add_argument('--max-event-s',type=float,default=60)
     parser.add_argument('--retention-days',type=int,default=7,choices=range(1,31))
     parser.add_argument('--max-buffer-mb',type=int,default=128)
+    parser.add_argument('--stop-file',type=Path)
+    parser.add_argument('--progress-file',type=Path)
+    parser.add_argument('--preview-file',type=Path)
     args=parser.parse_args()
     if not args.ffmpeg or not args.store_consent:
         parser.error('FFmpeg and --store-consent are required')
@@ -105,8 +108,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix='petmind-capture-') as temporary:
         folder=Path(temporary); segments=[]; processed=set(); analysed_until=0.
         error_log=(folder/'capture.log').open('w',encoding='utf-8')
-        process=subprocess.Popen(build_capture_command(args.ffmpeg,input_args,args.video_map,args.audio_map,folder),
-                                 stdout=subprocess.DEVNULL,stderr=error_log)
+        command=build_capture_command(args.ffmpeg,input_args,args.video_map,args.audio_map,folder)
+        command.remove('-nostdin')
+        process=subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,stderr=error_log)
+        stopping=False
         def publish(event):
             try:
                 output,actual_start=export_event(args.ffmpeg,segments,event,folder)
@@ -129,6 +134,10 @@ def main():
                 output.unlink(missing_ok=True)
         try:
             while True:
+                if args.stop_file and args.stop_file.exists() and not stopping:
+                    stopping=True
+                    if process.poll() is None:
+                        process.stdin.write(b'q\n'); process.stdin.flush()
                 if sum(p.stat().st_size for p in folder.glob('*.mp4'))>args.max_buffer_mb*1024*1024:
                     raise RuntimeError('capture buffer full; recording stopped to bound disk usage')
                 listing=folder/'segments.csv'
@@ -140,6 +149,11 @@ def main():
                     if not path.is_file() or end<=start: continue
                     segment={'path':path,'start':start,'end':end}
                     segments.append(segment)
+                    if args.preview_file:
+                        args.preview_file.parent.mkdir(parents=True,exist_ok=True)
+                        preview=args.preview_file.with_suffix('.tmp.jpg')
+                        run_ffmpeg(args.ffmpeg,['-sseof','-0.2','-i',str(path),'-frames:v','1','-update','1',str(preview)])
+                        preview.replace(args.preview_file)
                     wav=folder/'audio.wav'
                     run_ffmpeg(args.ffmpeg,['-i',str(path),'-vn','-ar','16000','-ac','1','-t',str(end-start),str(wav)])
                     # Demuxers may emit a completed segment ahead of wall clock;
@@ -156,6 +170,11 @@ def main():
                         result=post('/audio-clips/upload',params=params,data=stream,headers={'Content-Type':'audio/wav'})
                     wav.unlink(missing_ok=True)
                     windows=candidate_windows(result['analysis'])
+                    if args.progress_file:
+                        progress=args.progress_file.with_suffix('.tmp')
+                        progress.write_text(json.dumps({'at':time.time(),
+                            'model_ready':bool(result['analysis'].get('audio_lstm'))}),encoding='utf-8')
+                        progress.replace(args.progress_file)
                     for w in windows: planner.add(start+w['start_s'],start+w['end_s'],result['id'])
                     log(observation_id=result['observation_id'],dog_windows=len(windows),model_status=result['analysis'].get('model_status','ready'))
                     processed.add(row[0]); analysed_until=end

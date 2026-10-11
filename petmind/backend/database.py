@@ -1,7 +1,7 @@
 """SQLite observation, suggestion and command persistence, adapted from legacy backend."""
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, Float, Index, UniqueConstraint, create_engine, event, text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, Float, Boolean, Index, UniqueConstraint, create_engine, event, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -123,9 +123,20 @@ class OutingLog(Base):
     title = Column(String, nullable=False)
     input_mode = Column(String, nullable=False)
     started_at = Column(DateTime, nullable=False, default=utcnow)
+    store_consent_at = Column(DateTime)
     ended_at = Column(DateTime)
     __table_args__ = (Index('one_active_outing_per_pet', 'pet_id', unique=True,
                            sqlite_where=text('ended_at IS NULL')) ,)
+
+
+class CaptureJob(Base):
+    __tablename__ = 'capture_jobs'
+    outing_id = Column(String, ForeignKey('outings.id'), primary_key=True)
+    pet_id = Column(String, nullable=False, index=True)
+    state = Column(String, nullable=False, default='waiting')
+    owner = Column(String)
+    heartbeat_at = Column(DateTime)
+    stop_requested = Column(Boolean, nullable=False, default=False)
 
 
 class OutingObservation(Base):
@@ -146,6 +157,12 @@ class ObservationMedia(Base):
 
 def init_db():
     Base.metadata.create_all(engine)
+    # Existing single-file SQLite databases predate outing-level consent evidence.
+    if engine.dialect.name == 'sqlite':
+        with engine.begin() as connection:
+            columns = {row[1] for row in connection.exec_driver_sql('PRAGMA table_info(outings)')}
+            if 'store_consent_at' not in columns:
+                connection.exec_driver_sql('ALTER TABLE outings ADD COLUMN store_consent_at DATETIME')
 
 
 def get_db():
