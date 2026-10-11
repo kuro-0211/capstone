@@ -21,7 +21,7 @@ class _OutingsPanelState extends State<OutingsPanel> {
   List<dynamic> outings = [];
   Map<String, dynamic>? active, report, explanation, dayReport, dayExplanation;
   String? selected;
-  String mode = 'synthetic_demo';
+  String mode = 'uploaded_audio';
   String error = '';
   bool busy = false;
   int generation = 0;
@@ -197,9 +197,9 @@ class _OutingsPanelState extends State<OutingsPanel> {
         const SizedBox(height: 20),
         if (active == null) Wrap(spacing: 12, crossAxisAlignment: WrapCrossAlignment.center, children: [
           DropdownButton<String>(value: mode, items: const [
-            DropdownMenuItem(value: 'synthetic_demo', child: Text('합성 시연')),
-            DropdownMenuItem(value: 'prepared_video', child: Text('준비된 영상·음원')),
             DropdownMenuItem(value: 'uploaded_audio', child: Text('사용자 음원')),
+            DropdownMenuItem(value: 'prepared_video', child: Text('준비된 영상·음원')),
+            DropdownMenuItem(value: 'synthetic_demo', child: Text('합성 시연')),
           ], onChanged: busy ? null : (value) => setState(() => mode = value!)),
           FilledButton(onPressed: busy ? null : () => run(() async {
             final result = await request('/outings', {'pet_id': widget.petId, 'input_mode': mode, 'title': '외출 관찰'});

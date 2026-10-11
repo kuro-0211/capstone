@@ -7,6 +7,42 @@ import 'package:http/testing.dart';
 import 'package:petmind_app/outings_panel.dart';
 
 void main() {
+  testWidgets('new outing starts in audio mode for the current demo flow', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    Map<String, dynamic>? started;
+    final report = {'moments': [], 'sample_seconds': 0,
+      'unknown_seconds': 0, 'bark_candidate_count': 0};
+    final client = MockClient((request) async {
+      final path = request.url.path;
+      if (path == '/outings' && request.method == 'POST') {
+        expect(jsonDecode(request.body)['input_mode'], 'uploaded_audio');
+        started = {'id': 'outing-audio', 'status': 'active',
+          'input_mode': 'uploaded_audio', 'input_note': '사용자 음원',
+          'started_at': '2026-10-11T08:00:00Z'};
+        return http.Response(jsonEncode(started), 201,
+          headers: {'content-type': 'application/json; charset=utf-8'});
+      }
+      final dynamic result = path == '/outings' ? (started == null ? [] : [started])
+        : path == '/audio-clips' ? []
+        : path == '/audio-clips/review-queue' ? {'items': []} : report;
+      return http.Response(jsonEncode(result), 200,
+        headers: {'content-type': 'application/json; charset=utf-8'});
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
+      child: OutingsPanel(client: client, base: 'http://localhost',
+        petId: 'demo-dog', onActiveChanged: (_) {})))));
+    await tester.pumpAndSettle();
+    expect(find.text('사용자 음원'), findsOneWidget);
+    await tester.tap(find.text('외출 시작'));
+    await tester.pumpAndSettle();
+    expect(started?['input_mode'], 'uploaded_audio');
+    expect(find.textContaining('외출 진행 중'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('HTML server error shows a readable outings retry message', (tester) async {
     final client = MockClient((_) async => http.Response('<html>proxy error</html>', 502));
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: OutingsPanel(
