@@ -38,6 +38,15 @@ class _OutingsPanelState extends State<OutingsPanel> {
       'synthetic_demo': '합성 시연'};
     return '$when · ${outing['status'] == 'active' ? '진행 중' : '종료'} · ${modes[outing['input_mode']] ?? outing['input_mode']}';
   }
+  String compactOutingLabel(Map<String, dynamic> outing) {
+    final started = DateTime.tryParse(outing['started_at']?.toString() ?? '');
+    final korea = started?.toUtc().add(const Duration(hours: 9));
+    final when = korea == null ? '시각 없음'
+      : '${korea.month}/${korea.day} ${korea.hour.toString().padLeft(2, '0')}:${korea.minute.toString().padLeft(2, '0')}';
+    const modes = {'uploaded_audio': '음원', 'prepared_video': '준비 영상',
+      'synthetic_demo': '합성'};
+    return '$when · ${outing['status'] == 'active' ? '진행 중' : '종료'} · ${modes[outing['input_mode']] ?? '기타'}';
+  }
   String providerLabel(dynamic value) {
     final raw = value?.toString() ?? '';
     if (raw.startsWith('gemini:')) return 'Gemini 근거 선택·기록 기반 설명';
@@ -233,6 +242,13 @@ class _OutingsPanelState extends State<OutingsPanel> {
         if (outings.isNotEmpty) DropdownButton<String>(value: selected, isExpanded: true,
           items: outings.map((o) => DropdownMenuItem<String>(value: o['id'],
             child: Text(outingLabel(Map<String, dynamic>.from(o)), overflow: TextOverflow.ellipsis))).toList(),
+          selectedItemBuilder: (context) => outings.map((o) => Align(
+            alignment: Alignment.centerLeft,
+            child: Text(MediaQuery.sizeOf(context).width < 600
+              ? compactOutingLabel(Map<String, dynamic>.from(o))
+              : outingLabel(Map<String, dynamic>.from(o)),
+              overflow: TextOverflow.ellipsis),
+          )).toList(),
           onChanged: busy ? null : (value) { selected = value; load(); }),
         TextButton(onPressed: busy ? null : load, child: const Text('외출 기록 새로고침')),
         const Divider(height: 32),

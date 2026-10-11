@@ -7,6 +7,31 @@ import 'package:http/testing.dart';
 import 'package:petmind_app/outings_panel.dart';
 
 void main() {
+  testWidgets('narrow outing selector keeps date status and input legible', (tester) async {
+    tester.view.physicalSize = const Size(390, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = MockClient((request) async {
+      final dynamic result = request.url.path == '/outings'
+        ? [{'id': 'outing-1', 'status': 'ended',
+            'started_at': '2026-10-11T08:00:00Z', 'input_mode': 'uploaded_audio'}]
+        : request.url.path == '/audio-clips/review-queue' ? {'items': []}
+        : request.url.path == '/audio-clips' ? []
+        : {'moments': [], 'sample_seconds': 0, 'unknown_seconds': 0,
+            'bark_candidate_count': 0};
+      return http.Response(jsonEncode(result), 200,
+        headers: {'content-type': 'application/json; charset=utf-8'});
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
+      child: OutingsPanel(client: client, base: 'http://localhost',
+        petId: 'demo-dog', onActiveChanged: (_) {})))));
+    await tester.pumpAndSettle();
+    expect(find.text('10/11 17:00 · 종료 · 음원'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('older cited observation opens evidence outside the selected outing', (tester) async {
     tester.view.physicalSize = const Size(1200, 1800);
     tester.view.devicePixelRatio = 1;

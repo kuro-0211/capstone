@@ -204,7 +204,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme: GenesisTheme.light,
       home: DashboardPage(client: client)));
     await tester.pumpAndSettle();
-    expect(find.textContaining('10월 11일 16:44'), findsOneWidget);
+    expect(find.textContaining('10/11 16:44 · 종료 · 음원'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.drag(find.byType(ListView).first, const Offset(0, -500));
     await tester.pumpAndSettle();
