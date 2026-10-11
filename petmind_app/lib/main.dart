@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:http/http.dart' as http;
 import 'genesis_theme.dart';
 import 'outings_panel.dart';
@@ -11,7 +13,10 @@ const String apiBase = String.fromEnvironment(
   defaultValue: 'http://localhost:8010',
 );
 
-void main() => runApp(const PetMindApp());
+void main() {
+  runApp(const PetMindApp());
+  if (kIsWeb) SemanticsBinding.instance.ensureSemantics();
+}
 
 class PetMindApp extends StatelessWidget {
   const PetMindApp({super.key});
