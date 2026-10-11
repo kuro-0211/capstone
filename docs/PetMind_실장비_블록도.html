@@ -12,21 +12,21 @@
 </main><script>
 const N=(title,sub,status,detail,source='')=>({title,sub,status,detail,source});
 const diagrams=[
-{name:'전체 블록도',tag:'00 / END-TO-END',title:'실제 환경에서 보호자 확인까지',caption:'가정의 원본 신호 → Pi 수집 → PC 분석·저장 → 개별 기록 RAG → 보호자 확인. 무거운 AI 추론은 PC에서 수행하는 구성입니다.',input:'가정에서 녹음한 소리·고정 카메라 영상, 반려견 ID, 외출 세션, 보호자 의견.',output:'근거 구간이 연결된 관찰·귀가 요약·케어 제안, 승인 후 장치 실행 결과.',boundary:'Pi 수집기와 물리 재생은 추가 개발 대상. 현재 파일 기반 분석과 명령 상태 처리는 구현됨. 원격 인터넷 공개용 인증·접속 구성은 별도 필요.',labels:['PCM / 프레임','WAV / 영상 + 시각','분석 요청','점수·구간·품질','같은 반려견의 기록','설명 + 근거 ID','검토·승인','명령 / ACK'],nodes:[
+{name:'전체 블록도',tag:'00 / END-TO-END',title:'실제 환경에서 보호자 확인까지',caption:'가정의 원본 신호 → Pi 수집 → PC 분석·저장 → 개별 기록 RAG → 보호자 확인. 무거운 AI 추론은 PC에서 수행하는 구성입니다.',input:'가정에서 녹음한 소리·고정 카메라 영상, 반려견 ID, 외출 세션, 보호자 의견.',output:'근거 구간이 연결된 관찰·귀가 요약·케어 제안, 승인 후 장치 실행 결과.',boundary:'Pi 수집 코드·사건 영상 연결은 구현했으며 장치 검증은 남음. 물리 음악 재생은 추가 개발 대상. 원격 인터넷 공개용 인증·접속 구성은 별도 필요.',labels:['PCM / 프레임','WAV / 영상 + 시각','분석 요청','점수·구간·품질','같은 반려견의 기록','설명 + 근거 ID','검토·승인','명령 / ACK'],nodes:[
 N('마이크 · 고정 카메라','가정의 실제 소리 / 영상','external','실제 반려견의 녹음과 영상을 입력합니다. 소리의 발생 주체나 감정·질환을 신호만으로 확정하지 않습니다.'),
-N('Raspberry Pi 수집기','녹음 · 촬영 · 시각 부여','planned','장비에서 짧은 음원과 영상 구간을 수집하는 목표 모듈입니다. 연속 수집, 시간 정렬, 재연결을 추가해야 합니다. Pi에서 LSTM 학습을 수행하는 구조가 아닙니다.'),
-N('PC · FastAPI 수신','반려견 / 외출 세션에 연결','implemented','기존 WAV 업로드·관찰 API를 활용합니다. Pi의 자동 업로드는 추가 구현 대상입니다. 단일 가정의 로컬 네트워크 사용을 기본으로 합니다.','petmind/backend/routers/audio_clips.py'),
+N('Raspberry Pi 수집기','녹음 · 촬영 · 시각 부여','implemented','FFmpeg 구간 수집과 자동 업로드를 구현했습니다. 실제 Pi 드라이버·시계 오차·재연결 검증은 남았습니다. 모델 추론은 PC에서 수행합니다.','scripts/monitor_audio_events.py'),
+N('PC · FastAPI 수신','반려견 / 외출 세션에 연결','implemented','기존 WAV 업로드·관찰 API를 활용합니다. 수집기의 자동 WAV 업로드를 구현했으며 실제 Pi 연결 검증은 남았습니다. 단일 가정의 로컬 네트워크 사용을 기본으로 합니다.','petmind/backend/routers/audio_clips.py'),
 N('음성 LSTM 분석','개 소리 후보 / 점수 / 품질','implemented','음성 LSTM과 에너지 후보를 구분해 산출합니다. 카메라 영상은 보호자가 원본 장면을 확인하는 용도로 연결합니다.','pet_monitor/audio_lstm.py'),
 N('SQLite · 원본 파일 저장','관찰 · 시각 · 의견 · 출처','implemented','메타데이터는 SQLite, 원본 미디어는 파일로 보관합니다. 반려견·외출·관찰 ID로 연결하며 저장 동의와 원본 만료 상태를 관리합니다.','petmind/backend/database.py'),
 N('개별 기록 RAG · MCP','집계 + 과거 근거 → 설명','implemented','같은 반려견의 비교 가능한 기록과 보호자 의견을 검색합니다. 집계는 코드로 계산하며 Gemini 또는 규칙 제공자가 설명합니다.','petmind/backend/mcp_server.py'),
 N('Flutter 보호자 화면','구간 재생 · 귀가 요약 · 질문','implemented','모델 점수, 근거 원본, 보호자 확인 상태를 표시합니다. 실제 보호자가 의견을 남겨 모델 결과와 함께 검토합니다.','petmind_app/lib/'),
 N('보호자 검토 · 승인','제안 확인 → 실행 요청','implemented','제안을 자동 실행하지 않습니다. 보호자의 승인 이후에만 음악 명령을 요청하며 승인·요청·결과를 기록합니다.','petmind/backend/routers/care.py'),
 N('Pi 실행기 · 스피커','실제 재생 + 상태 응답','planned','실제 오디오 출력 드라이버와 재생 결과 확인을 연결해야 합니다. 현재 device_agent는 명령 왕복용이며 물리 재생 구현이 아닙니다.','petmind/device_agent.py') ]},
-{name:'① 입력 수집',tag:'01 / ACQUISITION',title:'실장비 신호를 기록 가능한 입력으로',caption:'권장 연결: 마이크·카메라 → Raspberry Pi → 같은 네트워크의 PC. 기기 모델과 연결 규격은 실제 보유 장비에 맞춰 확정합니다.',input:'마이크 PCM, 고정 카메라 프레임, pet_id·outing_id.',output:'원본 파일, 수집 시각, 길이, 출처, 반려견·세션 연결 정보.',boundary:'현재는 수동 WAV 업로드가 검증 경로. 연속 수집·재전송·중복 방지·동일 시간축 매핑은 목표 설계이며 기존 API에 자동 연결을 추가해야 함.',labels:['장비 드라이버','타임스탬프','구간 파일','HTTP 업로드','유효성 확인'],nodes:[
+{name:'① 입력 수집',tag:'01 / ACQUISITION',title:'실장비 신호를 기록 가능한 입력으로',caption:'권장 연결: 마이크·카메라 → Raspberry Pi → 같은 네트워크의 PC. 기기 모델과 연결 규격은 실제 보유 장비에 맞춰 확정합니다.',input:'마이크 PCM, 고정 카메라 프레임, pet_id·outing_id.',output:'원본 파일, 수집 시각, 길이, 출처, 반려견·세션 연결 정보.',boundary:'동일 파일의 연속 구간 수집·시각 기록·자동 WAV 업로드·사건 영상 연결을 검증함. 실제 Pi 드라이버·시계 오차와 자동 재연결·오프라인 재전송은 후속 작업.',labels:['장비 드라이버','타임스탬프','구간 파일','HTTP 업로드','유효성 확인'],nodes:[
 N('마이크 · 카메라 연결','입력 장치 확인','external','USB 마이크·USB/CSI 카메라 등 실제 장비를 사용합니다. 특정 모델의 설치 완료를 가정하지 않으며 음량·시야·가림 조건을 먼저 확인합니다.'),
-N('Pi 녹음 · 촬영','짧은 구간 단위 수집','planned','지속 녹음과 영상 캡처를 구현합니다. 기존 업로드 계약에 맞춰 음원은 30초 이하 WAV로 분할하고 샘플 누락과 장치 끊김을 기록해야 합니다.'),
+N('Pi 녹음 · 촬영','짧은 구간 단위 수집','implemented','FFmpeg로 약 5초의 영상·음성 구간을 수집하고 WAV를 자동 업로드합니다. 파일 입력은 검증했으며 실제 장치 검증은 남았습니다.','scripts/monitor_audio_events.py'),
 N('시간 정렬 · 전송 버퍼','기기 시각 / 구간 ID','planned','PC와 Pi 시각을 동기화하고 원본 구간의 시작·종료 시각을 보존합니다. 네트워크 단절 시 제한된 버퍼와 안전한 재전송이 필요합니다.'),
-N('PC 업로드 · 검증','WAV ≤ 30초 / ≤ 12MB','implemented','기존 음원 API가 형식·길이·채널·유한한 샘플을 검사합니다. 파일 수신 처리는 구현되어 있으나 Pi 자동 수집 어댑터는 추가해야 합니다.','petmind/backend/routers/audio_clips.py'),
+N('PC 업로드 · 검증','WAV ≤ 30초 / ≤ 12MB','implemented','기존 음원 API가 형식·길이·채널·유한한 샘플을 검사합니다. 파일 수신과 자동 수집 어댑터를 구현했습니다. 실제 Pi 장치 검증은 남았습니다.','petmind/backend/routers/audio_clips.py'),
 N('개별 세션 연결','pet_id / outing_id','implemented','외출 시작·종료와 반려견 ID에 수집한 관찰을 연결합니다. 세션 없는 과거 관찰도 유지합니다.','petmind/backend/services/outings.py'),
 N('원본 · 관찰 분석 요청','미디어 참조 + 메타데이터','implemented','저장 동의·출처·만료 정책과 함께 분석을 수행합니다. 실제 수집 시각과 영상 오프셋의 정확한 대응은 장비 통합에서 검증해야 합니다.','petmind/backend/routers/audio_clips.py') ]},
 {name:'② 음성 LSTM',tag:'02 / AUDIO INTELLIGENCE',title:'소리를 분석하되, 확정 대신 후보로',caption:'기존 음성 모델의 실제 처리 구조. 에너지 기반 소리 후보와 LSTM의 개 소리 분류 점수는 별도 결과입니다.',input:'실제 녹음 WAV 또는 라이선스·출처를 확인한 공개 음원.',output:'5초 창별 dog_score·후보 라벨·원본 구간, 별도의 에너지 후보, 모델 가용 상태.',boundary:'개 소리 / 기타 소리의 실험 모델. 짖음·낑낑·하울링 세부 분류, 감정·질환, TV 속 소리 구분은 지원하지 않음. 점수는 보정된 확률이 아님.',labels:['유효 WAV','5초 창','시계열 특징','추론 점수','기록·검토'],nodes:[
@@ -36,11 +36,11 @@ N('Log-mel 특징','40 mel bins / 학습 통계','implemented','STFT→40채널 
 N('오디오 LSTM','hidden 32 → 평균 → Linear 2','implemented','LSTM 시계열 출력의 평균을 취한 뒤 2개 클래스 점수를 계산합니다. 기존 모델과 추가 학습 후보는 동일 분할 조건으로 비교합니다.','pet_monitor/audio_lstm.py'),
 N('임계값 · 품질 상태','dog / other 후보 · 미준비','implemented','검증 자료에서 고정한 임계값으로 후보를 생성합니다. 모델이 없거나 실패하면 정상 감지로 취급하지 않습니다. 5초 분석 창은 발성의 정확한 시작·종료 정답이 아닙니다.','pet_monitor/audio_lstm.py'),
 N('원본 재생 · 보호자 의견','모델 결과와 의견 분리','implemented','원본을 듣고 개 소리·TV·불확실 등의 의견을 남깁니다. 의견이 곧 정답 라벨이거나 즉시 재학습 결과인 것은 아닙니다.','petmind/backend/routers/audio_clips.py') ]},
-{name:'③ 카메라 장면 확인',tag:'03 / CAMERA EVIDENCE',title:'소리가 난 상황을 원본 장면으로 확인',caption:'카메라는 보호자의 상황 확인용입니다. 실제 영상의 시각을 음성 관찰과 연결해 필요한 장면을 다시 볼 수 있도록 구성합니다.',input:'고정 카메라의 원본 영상, 촬영 시각, 음성 관찰·외출 ID.',output:'음성 관찰과 연결된 영상 구간, 원본 재생, 보호자의 확인 의견.',boundary:'Pi 촬영·PC 자동 수신·음성 관찰과의 시간 정렬은 추가 구현 대상. 기존 영상 메타데이터와 구간 재생 코드를 재사용하며, 영상에서 행동·감정·질환을 자동 판정하지 않음.',labels:['원본 장면','영상 + 시각','저장 · 연결','관찰 ID / 구간','원본 확인'],nodes:[
+{name:'③ 카메라 장면 확인',tag:'03 / CAMERA EVIDENCE',title:'소리가 난 상황을 원본 장면으로 확인',caption:'카메라는 보호자의 상황 확인용입니다. 실제 영상의 시각을 음성 관찰과 연결해 필요한 장면을 다시 볼 수 있도록 구성합니다.',input:'고정 카메라의 원본 영상, 촬영 시각, 음성 관찰·외출 ID.',output:'음성 관찰과 연결된 영상 구간, 원본 재생, 보호자의 확인 의견.',boundary:'FFmpeg 버퍼·사건 MP4 저장·관찰 연결은 파일 입력 검증 완료. 실제 Pi 드라이버·시각 오차·장시간 동작은 미검증. 기존 영상 메타데이터와 구간 재생 코드를 재사용하며, 영상에서 행동·감정·질환을 자동 판정하지 않음.',labels:['원본 장면','영상 + 시각','저장 · 연결','관찰 ID / 구간','원본 확인'],nodes:[
 N('고정 카메라','한 마리 / 일정한 시야','external','보호자가 방 안 상황을 확인할 수 있도록 원본 장면을 촬영합니다. 조명과 촬영 범위를 먼저 확인합니다.'),
-N('Pi 촬영 · 임시 버퍼','감지 전후 장면 / 수집 시각','planned','최근 영상을 제한된 버퍼에 보관하고 음성 LSTM 감지 창의 전후 장면을 확보합니다. 초기 목표는 앞뒤 각 5초이며 설정 가능하게 합니다. 버퍼·촬영·전송 어댑터를 추가해야 합니다.'),
-N('PC 원본 수신 · 보관','원본 파일 / 출처 / 길이','planned','영상 분석 결과에 의존하지 않는 원본 수신 경로를 추가합니다. 파일 형식과 길이를 확인하고 보관·만료 정책을 적용해야 합니다.'),
-N('음성 관찰에 장면 연결','관찰 ID / 시작 · 종료 시각','planned','기존 ObservationMedia 구조를 재사용해 음성 감지 창과 전후 장면을 연결합니다. 겹친 구간 병합·공통 수집 시각·버퍼 부족 표시를 추가해야 하며 업로드 시각을 촬영 시각으로 간주하지 않습니다.','petmind/backend/database.py'),
+N('Pi 촬영 · 임시 버퍼','감지 전후 장면 / 수집 시각','implemented','최근 영상을 제한된 버퍼에 보관하고 음성 LSTM 감지 창의 전후 장면을 확보합니다. 초기 목표는 앞뒤 각 5초이며 설정 가능하게 합니다. FFmpeg 수집기를 구현했습니다. 실제 장치 입력은 현장 검증이 필요합니다.'),
+N('PC 사건 MP4 수신','원본 파일 / 출처 / 길이','implemented','event-videos API가 MP4·감지 결과·수집 세션·시간 범위를 검증하고 보관합니다. 음원 삭제·만료는 영상에도 적용됩니다.'),
+N('음성 관찰에 장면 연결','관찰 ID / 시작 · 종료 시각','implemented','기존 ObservationMedia 구조를 재사용해 음성 감지 창과 전후 장면을 연결합니다. 겹친 구간 병합·수집 시각 연결·버퍼 부족 표시를 구현했습니다. 장치 시계 오차는 현장에서 검증해야 합니다.','petmind/backend/database.py'),
 N('근거 영상 구간 재생','기존 플레이어 재사용','implemented','기존 연결 영상의 구간 재생 코드를 활용합니다. 실제 카메라 입력이 연결되면 보호자가 소리 발생 전후의 상황을 확인하도록 구성합니다.','petmind/backend/routers/outings.py'),
 N('보호자 상황 확인','장면 검토 / 의견 기록','implemented','Flutter에서 연결된 원본 장면을 보고 의견을 남깁니다. 실제 장비에서 생성된 영상과 음성의 일치 여부는 통합 후 검증해야 합니다.','petmind_app/lib/outings_panel.dart') ]},
 {name:'④ 기록 · RAG',tag:'04 / GROUNDED CARE',title:'반려견별 기록에서 설명의 근거를 찾기',caption:'집계 수치는 코드로 계산하고, 검색된 기록을 근거로 설명합니다. 보호자 의견과 모델 관찰은 출처를 구분합니다.',input:'관찰·소리 후보·원본 참조·보호자 의견, 반려견 및 외출 질문.',output:'요약 수치, 과거 비교, 기록 ID와 원본 링크를 포함한 설명·케어 제안.',boundary:'일반 기록 검색은 기간·의미 검색을 사용하고 외출 질문은 계산된 사실의 의도별 선택 경로를 사용함. 모든 질문을 벡터 검색으로 처리한다고 표현하지 않음.',labels:['질문 범위','조회 / 집계','MCP 읽기 도구','근거 문맥','설명 + 인용'],nodes:[
@@ -70,13 +70,13 @@ const systemNodes={
 mic:{x:30,y:100,title:'마이크',sub:'실제 가정의 소리',status:'external'},
 camera:{x:30,y:280,title:'고정 카메라',sub:'원본 장면 · 한 마리',status:'external'},
 speaker:{x:30,y:550,title:'스피커',sub:'보호자 승인 후 음악',status:'planned'},
-capture:{x:235,y:100,title:'음원 수집기',sub:'WAV · 수집 시각',status:'planned'},
-frames:{x:235,y:280,title:'영상 임시 버퍼',sub:'최근 장면 보관 · 감지 전후 저장',status:'planned'},
+capture:{x:235,y:100,title:'음원 수집기',sub:'FFmpeg · WAV · 수집 시각',status:'implemented'},
+frames:{x:235,y:280,title:'영상 임시 버퍼',sub:'최근 장면 보관 · 감지 전후 저장',status:'implemented'},
 agent:{x:235,y:550,title:'장치 실행기',sub:'명령 수신 → 실제 출력',status:'planned'},
 api:{x:445,y:100,title:'FastAPI 수신',sub:'pet_id · outing_id',status:'implemented'},
 audio:{x:650,y:100,title:'음성 LSTM',sub:'16kHz · 5초 · 소리 후보',status:'implemented'},
 store:{x:445,y:280,title:'SQLite · 원본',sub:'관찰 · 출처 · 보호자 의견',status:'implemented'},
-video:{x:650,y:280,title:'원본 영상 연결',sub:'수신 · 보관 · 음성 시각 연결',status:'planned'},
+video:{x:650,y:280,title:'사건 영상 연결',sub:'MP4 · 감지 창 · 관찰 ID',status:'implemented'},
 rag:{x:445,y:450,title:'기록 RAG · MCP',sub:'반려견별 검색 · 수치 집계',status:'implemented'},
 llm:{x:650,y:450,title:'설명 제공자',sub:'Gemini API / 규칙',status:'implemented'},
 command:{x:445,y:620,title:'승인 · 명령 API',sub:'요청 / 수신 / 결과 상태',status:'implemented'},
@@ -93,16 +93,16 @@ app_command:['app','command','command','승인 요청'],command_agent:['command'
 const S=(title,n,e,txt,topic)=>({title,n,e,txt,topic});
 const scenes=[
 {name:'소리 관찰 · 보호자 확인',steps:[
-S('마이크로 소리 수집',['mic','capture'],['mic_capture'],'집 안의 실제 소리를 Pi가 짧은 WAV로 수집합니다. 연속 녹음과 장치 연결은 추가 구현 대상입니다.','목표 장비 경로 · PCM → WAV'),
-S('PC로 보내 외출에 연결',['capture','api'],['capture_api'],'수집 시각과 반려견·외출 정보를 PC로 보냅니다. 기존 WAV 수신 API에 Pi 자동 전송을 연결해야 합니다.','WAV ≤ 30초 · pet_id / outing_id'),
+S('마이크로 소리 수집',['mic','capture'],['mic_capture'],'집 안의 실제 소리를 Pi가 짧은 WAV로 수집합니다. FFmpeg 수집 코드가 있으며 실제 마이크 연결은 현장에서 확인해야 합니다.','목표 장비 경로 · PCM → WAV'),
+S('PC로 보내 외출에 연결',['capture','api'],['capture_api'],'수집 시각과 반려견·외출 정보를 PC로 보냅니다. 수집기가 WAV API에 수집 시각·세션 ID를 함께 전송합니다. 장치 시각 정확도는 현장 검증 대상입니다.','WAV ≤ 30초 · pet_id / outing_id'),
 S('소리 후보 분석',['api','audio'],['api_audio'],'음성 LSTM이 5초 창의 개 소리 점수를 계산합니다. 에너지 후보는 별도 결과이며 감정이나 질환을 확정하지 않습니다.','16kHz → log-mel → LSTM → 점수'),
 S('관찰과 원본 저장',['audio','store'],['audio_store'],'창별 점수·품질과 원본 위치를 저장합니다. 5초 분석 창을 실제 발성 시작·종료 시각으로 해석하지 않습니다.','SQLite 메타데이터 + 원본 WAV'),
 S('보호자가 원본 확인',['store','app','human'],['store_app','app_human'],'화면에서 해당 구간을 듣고 관찰 후보를 검토합니다. 원본이 만료되었거나 모델이 준비되지 않았으면 상태를 표시합니다.','타임라인 → 원본 구간 재생'),
 S('보호자 의견을 기록으로',['human','app','store'],['human_app','app_store'],'보호자가 TV 소리·개 소리·불확실 등의 의견을 남깁니다. 의견은 모델의 정답이나 즉시 재학습 결과와 구분해 저장합니다.','의견 → 같은 반려견의 향후 검색 근거') ]},
 {name:'카메라 장면 확인',steps:[
-S('고정 카메라 촬영',['camera','frames'],['camera_frames'],'한 마리·고정 카메라 조건으로 최근 장면을 임시 버퍼에 보관합니다. 감지 이전 장면을 확보하기 위한 버퍼·촬영 어댑터는 추가 구현 대상입니다.','카메라 → 원본 영상 · 시각'),
-S('PC로 원본 영상 전달',['frames','video'],['frames_video'],'음성 LSTM 감지 창과 전후 장면을 버퍼에서 확보해 PC로 전달합니다. 초기 목표는 앞뒤 각 5초이며 감지 후 장면까지 기다려 저장하는 경로를 추가합니다.','추가 구현 · 원본 수신 / 보관'),
-S('음성 관찰과 장면 연결',['video','store'],['video_store'],'소리 후보가 기록된 시각에 해당하는 영상 구간을 관찰 ID에 연결합니다. 장비 시간 정렬과 자동 연결을 추가하고 검증해야 합니다.','추가 구현 · 원본 참조 / 시작·종료 시각'),
+S('고정 카메라 촬영',['camera','frames'],['camera_frames'],'한 마리·고정 카메라 조건으로 최근 장면을 임시 버퍼에 보관합니다. 버퍼·촬영 어댑터를 구현하고 파일 입력으로 검증했습니다. 실장비 동작은 추가 확인해야 합니다.','카메라 → 원본 영상 · 시각'),
+S('PC로 원본 영상 전달',['frames','video'],['frames_video'],'음성 LSTM 감지 창과 전후 장면을 버퍼에서 확보해 PC로 전달합니다. 기본값은 앞뒤 각 5초이며 감지 후 장면과 병합 가능 구간까지 기다렸다가 저장합니다.','event-videos API · MP4 수신 / 보관'),
+S('음성 관찰과 장면 연결',['video','store'],['video_store'],'소리 후보가 기록된 시각에 해당하는 영상 구간을 관찰 ID에 연결합니다. 자동 연결·겹친 사건 병합·누락 표시를 구현했으며 장비 시간 오차는 추가 검증 대상입니다.','관찰 ID · 원본 참조 / 시작·종료 시각'),
 S('보호자가 근거 장면 확인',['store','app','human'],['store_app','app_human'],'보호자가 소리를 듣고 같은 시각의 장면을 보며 상황을 확인합니다. 기존 구간 재생 기능을 활용하고 실장비 음성·영상의 일치를 통합 검증합니다.','관찰 ID → 원본 장면 → 보호자 의견') ]},
 {name:'귀가 요약 · RAG 질문',steps:[
 S('보호자가 귀가 후 질문',['human','app'],['human_app'],'“외출 동안 무슨 소리가 있었어?” 또는 “지난번과 달라?”처럼 질문합니다. 질문은 대상 반려견과 외출에 연결됩니다.','Flutter → 반려견 / 외출 / 기간'),
@@ -127,6 +127,9 @@ let current=0,step=0,timer=null;
 const esc=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const positions=i=>{const row=Math.floor(i/3),col=row%2?2-i%3:i%3;return {x:60+col*375,y:60+row*185}};
 const palette={implemented:['#167260','#f0f9f5','기존 모듈'],planned:['#956016','#fffaf0','추가 연동·검증'],external:['#265dcc','#f0f5ff','실제 입력·사람']};
+diagrams[3].nodes[1].source='scripts/monitor_audio_events.py';
+diagrams[3].nodes[2].source='petmind/backend/routers/event_videos.py';
+diagrams[3].nodes[3].source='pet_monitor/event_video.py';
 // 모듈 안의 파일 표기는 실제 저장소 경로이며, 미구현 장비에는 파일을 지어내지 않는다.
 diagrams[6].nodes[2].source='scripts/train_audio_mil.py';
 diagrams[6].nodes[3].source='scripts/compare_audio_lstm.py';

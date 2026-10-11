@@ -8,7 +8,7 @@ import io
 import json
 import pickle
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 from urllib.parse import quote
 
@@ -38,8 +38,10 @@ def path_for(row):
 
 
 def purge_expired(db):
+    from ..services.event_video import delete_for_audio
     for row in db.scalars(select(AudioClipLog).where(AudioClipLog.deleted_at.is_(None), AudioClipLog.expires_at <= utcnow())):
         path_for(row).unlink(missing_ok=True)
+        delete_for_audio(db, row.id)
         row.deleted_at = utcnow()
         row.training_consent = 0
         row.verified_at = None
@@ -57,6 +59,7 @@ def require_clip(db, clip_id, pet_id):
 def to_out(row):
     review = json.loads(row.review_json)
     analysis = json.loads(row.analysis_json)
+    capture_kind = analysis.get('capture', {}).get('kind')
     score = analysis.get('dog_score')
     threshold = analysis.get('audio_lstm', {}).get('threshold', .5)
     reason = 'uncertain' if score is None or abs(score-threshold) <= .1 else 'routine_sample'
@@ -70,10 +73,13 @@ def to_out(row):
             'analysis': analysis, 'review': review, 'verified': row.verified_at is not None,
             'review_priority': reason, 'audio_available': original_available,
             'source_note': ('공개 자료 시연: '+analysis['demo_source'] if analysis.get('demo_source') else
+                            '장치 수집 음원' if capture_kind == 'device' else
+                            '원본 파일 재생 음원' if capture_kind == 'file_replay' else
                             '사용자 업로드 음원')+'; 소리 발생 위치·감정은 자동 확정하지 않습니다.'}
 
 
-def store_clip(db, content, pet_id, training_consent, retention_days, outing_id, demo_source=None):
+def store_clip(db, content, pet_id, training_consent, retention_days, outing_id, demo_source=None,
+               captured_at=None, capture_kind=None, capture_session=None):
     try:
         info = sf.info(io.BytesIO(content))
         if info.format != 'WAV' or info.duration <= 0 or info.duration > 30 or info.channels > 2:
@@ -83,6 +89,16 @@ def store_clip(db, content, pet_id, training_consent, retention_days, outing_id,
             raise ValueError('invalid samples')
     except Exception as exc:
         raise HTTPException(422, '30초 이하의 정상적인 모노/스테레오 WAV 파일이 필요합니다.') from exc
+    if (captured_at is None) != (capture_kind is None) or (capture_kind and not capture_session):
+        raise HTTPException(422, '수집 시각·종류·세션 ID가 함께 필요합니다.')
+    observed_at = utcnow()
+    if captured_at is not None:
+        if captured_at.tzinfo is None:
+            raise HTTPException(422, '수집 시작 시각에 시간대가 필요합니다.')
+        captured_at = captured_at.astimezone(timezone.utc)
+        observed_at = (captured_at+timedelta(seconds=info.duration)).replace(tzinfo=None)
+        if observed_at > utcnow() or (capture_kind == 'device' and demo_source):
+            raise HTTPException(422, '미래 수집 시각 또는 장치·시연 출처 혼합은 허용하지 않습니다.')
     FOLDER.mkdir(parents=True, exist_ok=True)
     clip_id = uuid.uuid4().hex
     path = FOLDER/(clip_id+'.wav')
@@ -107,10 +123,18 @@ def store_clip(db, content, pet_id, training_consent, retention_days, outing_id,
                 analysis['model_status'] = 'experimental_model_failed'
         else:
             analysis['model_status'] = 'experimental_model_not_prepared'
+        if captured_at is not None:
+            from pet_monitor.event_video import candidate_windows
+            analysis['capture'] = {'started_at': captured_at.isoformat(), 'kind': capture_kind,
+                                   'session_id': capture_session}
+            analysis['event_video'] = {'status': 'pending' if candidate_windows(analysis) else
+                                      'model_unavailable' if analysis.get('model_status') else 'not_triggered'}
         context = analysis['context']
         context['input_note'] = ('공개 자료 시연' if demo_source else '사용자 업로드 음원') + '; 에너지 기반 짖음 후보, 실제 짖음 여부는 보호자 확인 필요'
+        if capture_kind:
+            context['input_note'] = ('장치 동시 수집' if capture_kind == 'device' else '원본 파일 재생 입력') + '; 음성 LSTM 후보와 보호자 의견으로 확인; 영상 자동 행동 분석 없음'
         observation = save(db, ObservationIn(pet_id=pet_id, session_id='audio-'+clip_id,
-            observed_at=utcnow().isoformat()+'Z', source='user_audio', context=context, outing_id=outing_id), commit=False)
+            observed_at=observed_at.isoformat()+'Z', source='live' if capture_kind == 'device' else 'user_audio', context=context, outing_id=outing_id), commit=False)
         row = AudioClipLog(id=clip_id, pet_id=pet_id, observation_id=observation.id, filename=path.name,
             sha256=hashlib.sha256(content).hexdigest(), duration_s=info.duration,
             training_consent=int(training_consent), expires_at=utcnow()+timedelta(days=retention_days),
@@ -128,6 +152,9 @@ async def upload(request: Request, pet_id: str = Query(min_length=1,max_length=8
                  store_consent: bool = False, training_consent: bool = False,
                  retention_days: int = Query(default=7,ge=1,le=30), outing_id: str | None = None,
                  demo_source: str | None = Query(default=None, min_length=5, max_length=200),
+                 captured_at: datetime | None = None,
+                 capture_kind: Literal['device', 'file_replay'] | None = None,
+                 capture_session: str | None = Query(default=None, min_length=1, max_length=80),
                  db=Depends(get_db)):
     if not store_consent:
         raise HTTPException(422, '개인 기록 저장 동의가 필요합니다. 모델 학습 참여는 별도 선택입니다.')
@@ -140,7 +167,7 @@ async def upload(request: Request, pet_id: str = Query(min_length=1,max_length=8
             raise HTTPException(413, '파일은 12MB 이하여야 합니다.')
     purge_expired(db)
     return await run_in_threadpool(store_clip, db, bytes(content), pet_id, training_consent,
-                                   retention_days, outing_id, demo_source)
+                                   retention_days, outing_id, demo_source, captured_at, capture_kind, capture_session)
 
 
 @router.get('')
@@ -249,8 +276,10 @@ def consent(clip_id: str, data: Consent, db=Depends(get_db)):
 
 @router.post('/{clip_id}/delete-original')
 def delete_original(clip_id: str, pet_id: str, db=Depends(get_db)):
+    from ..services.event_video import delete_for_audio
     row = require_clip(db,clip_id,pet_id)
     path_for(row).unlink(missing_ok=True)
+    delete_for_audio(db, row.id)
     row.deleted_at = row.deleted_at or utcnow()
     row.training_consent = 0
     row.verified_at = None

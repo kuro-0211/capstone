@@ -7,6 +7,42 @@ import 'package:http/testing.dart';
 import 'package:petmind_app/outings_panel.dart';
 
 void main() {
+  testWidgets('audio event video shows missing roll and opens its evidence', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final report = {'sample_seconds': 5, 'unknown_seconds': 5,
+      'video_role': 'evidence_only', 'bark_candidate_count': 0,
+      'moments': [{'observation_id': 5, 'reason': '일부 구간 미확보',
+        'summary': '5초 음성 관찰', 'note': '앞 3초 미확보 · 영상 자동 행동 분석 없음',
+        'event_video': {'status': 'partial'}, 'media_available': true,
+        'audio_available': true, 'clip_url': '/outings/observations/5/clip?pet_id='}]};
+    final client = MockClient((request) async {
+      final path = request.url.path;
+      final dynamic result = path == '/outings'
+        ? [{'id': 'event-outing', 'status': 'ended', 'input_mode': 'live',
+            'started_at': '2026-10-12T00:00:00Z'}]
+        : path == '/audio-clips' ? []
+        : path == '/audio-clips/review-queue' ? {'items': []} : report;
+      return http.Response(jsonEncode(result), 200,
+        headers: {'content-type': 'application/json; charset=utf-8'});
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
+      child: OutingsPanel(client: client, base: 'http://localhost', petId: 'dog',
+        onActiveChanged: (_) {})))));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('앞 3초 미확보'), findsOneWidget);
+    expect(find.text('근거 장면 확인용'), findsWidgets);
+    expect(find.text('판단 불가'), findsNothing);
+    await tester.ensureVisible(find.text('구간 보기'));
+    await tester.tap(find.text('구간 보기'));
+    await tester.pumpAndSettle();
+    expect(find.text('관찰 #5 · 원본 근거'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('narrow outing selector keeps date status and input legible', (tester) async {
     tester.view.physicalSize = const Size(390, 900);
     tester.view.devicePixelRatio = 1;

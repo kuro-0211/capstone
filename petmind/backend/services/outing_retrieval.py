@@ -4,6 +4,7 @@ import unicodedata
 from collections import deque
 
 INTENTS = {
+    'video': ('영상', '장면', '녹화', '사건'),
     'provenance': ('공개', '시연', '합성', '출처', '데이터셋'),
     'comparison': ('비교', '지난', '이전', '차이', '늘었', '줄었', '전보다'),
     'guardian_opinion': ('보호자', '의견', '메모', '확인한', '확인했', '사용자', 'tv', '텔레비전', '외부 소리'),
@@ -52,10 +53,12 @@ def select_facts(facts, question, limit=8):
         kinds += ['provenance', 'quality', 'guardian_opinion', 'observation']
     if 'comparison' in kinds:
         kinds += ['summary', 'provenance', 'quality']
+    if 'video' in kinds:
+        kinds += ['provenance', 'quality', 'guardian_opinion']
     kinds = list(dict.fromkeys(kinds))
     buckets = {kind: [f for f in facts if f['kind'] == kind] for kind in kinds}
     # Facts are built in observation-ID order, so prefer recent details.
-    for kind in ('guardian_opinion', 'observation'):
+    for kind in ('guardian_opinion', 'observation', 'video'):
         if kind in buckets:
             buckets[kind].reverse()
     buckets = {kind: deque(values) for kind, values in buckets.items()}

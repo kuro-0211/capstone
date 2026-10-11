@@ -189,7 +189,10 @@ class _OutingsPanelState extends State<OutingsPanel> {
   Widget metrics(Map<String, dynamic> data) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     Wrap(spacing: 8, runSpacing: 8, children: [
       _metric('분석 표본', '${data['sample_seconds'] ?? 0}초'),
-      _metric('판단 불가', '${data['unknown_seconds'] ?? 0}초'),
+      if (data['video_role'] == 'evidence_only')
+        _metric('카메라', '근거 장면 확인용')
+      else
+        _metric('판단 불가', '${data['unknown_seconds'] ?? 0}초'),
       _metric('짖음 후보', '${data['bark_candidate_count'] ?? 0}회'),
     ]),
     if ((data['demo_sample_seconds'] as num? ?? 0) > 0) Padding(
@@ -286,7 +289,8 @@ class _OutingsPanelState extends State<OutingsPanel> {
           Text('중요한 순간 · 관찰 근거', style: Theme.of(context).textTheme.titleMedium),
           if (moments.isEmpty) const Text('저장된 관찰이 없습니다.'),
           for (final item in moments) ListTile(contentPadding: EdgeInsets.zero,
-            title: Text('#${item['observation_id']} · ${item['reason']}'), subtitle: Text(item['summary']),
+            title: Text('#${item['observation_id']} · ${item['reason']}'),
+            subtitle: Text(item['event_video'] == null ? item['summary'] : '${item['summary']}\n${item['note']}'),
             trailing: TextButton(onPressed: item['media_available'] == true || item['audio_available'] == true ? () => openMoment(Map<String, dynamic>.from(item)) : null,
               child: Text(item['media_available'] == true ? '구간 보기' : item['audio_available'] == true ? '음원 듣기' : '원본 없음'))),
         ],

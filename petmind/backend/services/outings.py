@@ -41,7 +41,8 @@ def input_scope(row, audio):
     if row.source in {'synthetic_demo', 'public_media'}:
         return 'public_demo'
     if audio:
-        return 'public_demo' if json.loads(audio.analysis_json).get('demo_source') else 'user_upload'
+        analysis = json.loads(audio.analysis_json)
+        return 'public_demo' if analysis.get('demo_source') else 'live' if analysis.get('capture',{}).get('kind') == 'device' else 'user_upload'
     return row.source
 
 
@@ -57,21 +58,41 @@ def moment(db, row, related=None):
         path = (root / filename).resolve()
         return path.is_relative_to(root.resolve()) and path.is_file()
     media_available = bool(media and exists(MEDIA_ROOT, media.filename))
+    from .event_video import event_source, available
+    event = event_source(media)
+    if event:
+        media_available = media_available and available(db, media)
+    audio_analysis = json.loads(audio.analysis_json) if audio else {}
+    event_info = event or audio_analysis.get('event_video')
+    if event_info and not media_available and event_info['status'] in {'ready','partial'}:
+        event_info = {**event_info, 'status':'missing_or_expired'}
+    event_labels = {'pending':'영상 확보 대기', 'ready':'감지 전후 영상 연결', 'partial':'일부 구간 미확보',
+                    'missing':'영상 확보 실패', 'missing_or_expired':'원본 누락·만료', 'deleted':'원본 삭제',
+                    'not_triggered':'음성 LSTM 후보 없음', 'model_unavailable':'음성 모델 미준비·실패'}
+    event_note = None
+    if event_info:
+        event_note = event_labels.get(event_info['status'],event_info['status'])
+        if event_info['status'] in {'ready','partial'}:
+            event_note += f" · 앞 {event_info.get('missing_pre_s',0):g}초 / 뒤 {event_info.get('missing_post_s',0):g}초 미확보"
+        event_note += ' · 영상 자동 행동 분석 없음'
     audio_available = bool(audio and audio.deleted_at is None and audio.expires_at > utcnow()
                            and exists(AUDIO_ROOT, audio.filename))
     data = json.loads(row.context_json)
     return {'observation_id': row.id, 'observed_at': row.observed_at.isoformat() + 'Z',
             'source': row.source, 'input_scope': input_scope(row, audio), 'summary': row.summary,
-            'reason': '반복 움직임 후보' if data['motion']['dominant'] in {'pacing', 'spinning'} else
+            'reason': event_labels.get(event_info['status'],'음성 관찰') if event_info else
+                      '반복 움직임 후보' if data['motion']['dominant'] in {'pacing', 'spinning'} else
                       '짖음 후보' if data['bark']['count'] else
                       '영상 판단 불가' if data['motion']['dominant'] == 'unknown' else '관찰 근거',
             'media_available': media_available,
+            'event_video': event_info,
             'audio_available': audio_available,
             'audio_url': f'/audio-clips/{audio.id}/player?pet_id=' if audio_available else None,
             'guardian_review': json.loads(audio.review_json) if audio else None,
             'clip_url': f'/outings/observations/{row.id}/clip?pet_id=' if media_available else None,
             'start_s': media.start_s if media else None, 'end_s': media.end_s if media else None,
             'note': '연결 기록은 있지만 재생 가능한 원본 파일이 없습니다.' if (media or audio) and not (media_available or audio_available) else
+                    event_note if event_info else
                     '별도 WAV와 영상의 결합 시연; 소리의 실제 발생 시각이 아닙니다.' if media else
                     '이 관찰에는 연결된 영상이 없습니다.'}
 
@@ -106,6 +127,14 @@ def aggregate(db, rows, clip_start=None, clip_end=None):
             end = row.observed_at.replace(tzinfo=timezone.utc).timestamp()
             start = end - window
             lane = ('live', row.pet_id)
+            if (clip_start and start < clip_start) or (clip_end and end > clip_end):
+                boundaries.append(row.id)
+                continue
+        elif audio and json.loads(audio.analysis_json).get('capture'):
+            capture = json.loads(audio.analysis_json)['capture']
+            start = datetime.fromisoformat(capture['started_at']).timestamp()
+            end = start + float(audio.duration_s)
+            lane = ('capture', row.pet_id, capture['session_id'])
             if (clip_start and start < clip_start) or (clip_end and end > clip_end):
                 boundaries.append(row.id)
                 continue
@@ -149,6 +178,8 @@ def aggregate(db, rows, clip_start=None, clip_end=None):
                 'included_in_metrics': row.id in kept_ids}
                for row in rows if row.id in kept_ids or row.id in skipped_ids]
     return {'observation_count': len(rows), 'counted_observation_ids': [r.id for r in kept],
+            'video_role': 'evidence_only' if kept and all(
+                audio_by_id.get(r.id) and json.loads(audio_by_id[r.id].analysis_json).get('capture') for r in kept) else 'legacy_or_mixed',
             'skipped_overlap_ids': skipped, 'excluded_day_boundary_ids': boundaries,
             'sample_seconds': round(seconds, 3),
             'demo_sample_seconds': round(demo_seconds, 3),
@@ -176,7 +207,7 @@ def summary_facts(current, scope='이번 외출에 연결된'):
     ids = current['counted_observation_ids']
     facts = [{'id': 'current.samples', 'text': f"{scope} 분석 표본은 {current['sample_seconds']:g}초입니다.",
               'observation_ids': ids, 'kind': 'summary'},
-             {'id': 'current.unknown', 'text': f"분석 표본 중 영상 판단 불가는 {current['unknown_seconds']:g}초입니다.",
+             {'id': 'current.unknown', 'text': '카메라는 원본 확인용이며 영상 행동 분석은 수행하지 않습니다.' if current.get('video_role') == 'evidence_only' else f"분석 표본 중 영상 판단 불가는 {current['unknown_seconds']:g}초입니다.",
               'observation_ids': ids, 'kind': 'quality'},
              {'id': 'current.bark', 'text': f"중복 제외 저장 구간의 짖음 후보는 {current['bark_candidate_count']}회입니다.",
               'observation_ids': ids, 'kind': 'bark'}]
@@ -187,6 +218,10 @@ def summary_facts(current, scope='이번 외출에 연결된'):
     for item in current['moments']:
         facts.append({'id': f"observation.{item['observation_id']}", 'text': item['summary'],
                       'observation_ids': [item['observation_id']], 'kind': 'observation'})
+        if item.get('event_video') and item['event_video']['status'] not in {'not_triggered','model_unavailable'}:
+            facts.append({'id':f"video.{item['observation_id']}", 'kind':'video',
+                          'text':f"관찰 #{item['observation_id']}: {item['note']}",
+                          'observation_ids':[item['observation_id']]})
         review = item.get('guardian_review')
         if review:
             labels = {'pet_vocalization': '반려견 소리', 'external_or_tv': 'TV·외부 소리',

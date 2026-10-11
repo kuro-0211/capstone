@@ -21,6 +21,7 @@ from .routers.feedback import router as feedback_router
 from .routers.comparisons import router as comparisons_router
 from .routers.outings import router as outings_router
 from .routers.audio_clips import router as audio_clips_router
+from .routers.event_videos import router as event_videos_router
 from .schemas import DemoRequest, ObservationIn, ObservationOut
 from .services.observations import save, to_out
 from .services.audio_retention import cleanup_once, cleanup_loop
@@ -51,6 +52,7 @@ app.include_router(feedback_router)
 app.include_router(comparisons_router)
 app.include_router(outings_router)
 app.include_router(audio_clips_router)
+app.include_router(event_videos_router)
 
 
 @app.get('/health')
