@@ -8,7 +8,7 @@ Widget audioInput(void Function(String, Uint8List) onSelected, void Function(Str
     final input = element as web.HTMLInputElement;
     input.type = 'file'; input.accept = '.wav,audio/wav';
     input.setAttribute('aria-label', '분석할 WAV 파일 선택');
-    input.style.color = '#dddddd';
+    input.style.color = '#0A0A0A';
     input.onchange = ((web.Event event) {
       final file = input.files?.item(0);
       if (file == null) return;

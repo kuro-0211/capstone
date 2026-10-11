@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,104 @@ import 'package:petmind_app/main.dart';
 import 'package:petmind_app/genesis_theme.dart';
 
 void main() {
+  testWidgets('server outage shows a retry path and recovers', (tester) async {
+    var online = false;
+    final client = MockClient((request) async {
+      if (!online) return http.Response('{"detail":"offline"}', 503);
+      final path = request.url.path;
+      final dynamic result = path == '/care/latest' || path.endsWith('/profile')
+        ? null : path == '/metrics' || path == '/media/catalog'
+        ? {} : path == '/outings/day'
+        ? {'moments': [], 'sample_seconds': 0, 'unknown_seconds': 0}
+        : path == '/audio-clips/review-queue' ? {'items': []} : [];
+      return http.Response(jsonEncode(result), 200);
+    });
+    await tester.pumpWidget(MaterialApp(home: DashboardPage(client: client)));
+    await tester.pumpAndSettle();
+    expect(find.text('연결 끊김'), findsOneWidget);
+    expect(find.textContaining('백엔드 실행을 확인한 뒤 다시 연결'), findsOneWidget);
+    online = true;
+    await tester.tap(find.text('다시 연결'));
+    await tester.pumpAndSettle();
+    expect(find.text('연결됨'), findsOneWidget);
+    expect(find.textContaining('백엔드 실행을 확인한 뒤 다시 연결'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('optional media failure keeps observations available and can recover', (tester) async {
+    var failCatalog = true;
+    var catalogRequests = 0;
+    final client = MockClient((request) async {
+      final path = request.url.path;
+      if (path == '/media/catalog') catalogRequests++;
+      if (path == '/media/catalog' && failCatalog) {
+        return http.Response('{"detail":"catalog unavailable"}', 503);
+      }
+      final dynamic result = path == '/care/latest' || path.endsWith('/profile')
+        ? null : path == '/observations'
+        ? [{'id': 7, 'source': 'synthetic_demo', 'observed_at': '2026-10-11T00:00:00Z'}]
+        : path == '/metrics' || path == '/media/catalog'
+        ? {} : path == '/outings/day'
+        ? {'moments': [], 'sample_seconds': 0, 'unknown_seconds': 0}
+        : path == '/audio-clips/review-queue' ? {'items': []} : [];
+      return http.Response(jsonEncode(result), 200);
+    });
+    await tester.pumpWidget(MaterialApp(theme: GenesisTheme.light,
+      home: DashboardPage(client: client)));
+    await tester.pumpAndSettle();
+    expect(find.text('연결됨'), findsOneWidget);
+    expect(find.textContaining('공개 자료 목록을 불러오지 못했습니다'), findsOneWidget);
+    expect(catalogRequests, 1);
+    await (tester.state(find.byType(DashboardPage)) as dynamic).refresh(silent: true);
+    await tester.pumpAndSettle();
+    expect(catalogRequests, 1);
+    expect(find.textContaining('공개 자료 목록을 불러오지 못했습니다'), findsOneWidget);
+    await tester.drag(find.byType(ListView).first, const Offset(0, -1000));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('관찰 #7 · synthetic_demo'), findsOneWidget);
+    failCatalog = false;
+    await tester.drag(find.byType(ListView).first, const Offset(0, 1000));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('다시 연결'));
+    await tester.pumpAndSettle();
+    expect(catalogRequests, 2);
+    expect(find.textContaining('공개 자료 목록을 불러오지 못했습니다'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('older refresh cannot replace a newer observation', (tester) async {
+    final firstObservation = Completer<http.Response>();
+    var observationRequests = 0;
+    final client = MockClient((request) async {
+      final path = request.url.path;
+      if (path == '/observations') {
+        observationRequests++;
+        if (observationRequests == 1) return firstObservation.future;
+        return http.Response(jsonEncode([{'id': 2, 'source': 'new',
+          'observed_at': '2026-10-11T00:00:00Z'}]), 200);
+      }
+      final dynamic result = path == '/care/latest' || path.endsWith('/profile')
+        ? null : path == '/metrics' || path == '/media/catalog'
+        ? {} : path == '/outings/day'
+        ? {'moments': [], 'sample_seconds': 0, 'unknown_seconds': 0}
+        : path == '/audio-clips/review-queue' ? {'items': []} : [];
+      return http.Response(jsonEncode(result), 200);
+    });
+    await tester.pumpWidget(MaterialApp(home: DashboardPage(client: client)));
+    await tester.pump();
+    expect(observationRequests, 1);
+    await (tester.state(find.byType(DashboardPage)) as dynamic).refresh();
+    await tester.drag(find.byType(ListView).first, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('관찰 #2 · new'), findsOneWidget);
+    firstObservation.complete(http.Response(jsonEncode([{'id': 1, 'source': 'old',
+      'observed_at': '2026-10-10T00:00:00Z'}]), 200));
+    await tester.pump();
+    expect(find.textContaining('관찰 #2 · new'), findsOneWidget);
+    expect(find.textContaining('관찰 #1 · old'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('Genesis dashboard stays usable on a narrow screen', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;

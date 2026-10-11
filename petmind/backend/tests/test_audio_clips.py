@@ -114,6 +114,7 @@ def test_missing_audio_file_is_not_advertised_as_playable(client):
     item = upload(client, '&outing_id='+session)
     with client.sessions() as db:
         audio_clips.path_for(db.get(AudioClipLog, item['id'])).unlink()
+    assert client.get('/audio-clips?pet_id=dog-a').json()[0]['audio_available'] is False
     moment = client.get('/outings/'+session+'/summary?pet_id=dog-a').json()['moments'][0]
     assert moment['audio_available'] is False and moment['audio_url'] is None
     assert '원본 파일이 없습니다' in moment['note']
@@ -134,3 +135,27 @@ def test_public_demo_provenance_cannot_become_user_training_data(client):
     assert review['review']['source'] == 'demo_operator_opinion'
     assert client.post('/audio-clips/'+item['id']+'/consent',
                        json={'pet_id':'demo-dog','training_consent':True}).status_code == 422
+
+
+def test_demo_audio_is_labeled_and_not_compared_with_user_upload(client):
+    first = client.post('/outings', json={'pet_id':'dog-a','input_mode':'uploaded_audio'}).json()['id']
+    demo = upload(client, '&outing_id='+first+'&demo_source=ESC-50%2Fexample.wav')
+    demo_report = client.get(f'/outings/{first}/summary?pet_id=dog-a').json()
+    assert demo_report['demo_sample_seconds'] == demo_report['sample_seconds'] == 1
+    assert demo_report['demo_observation_ids'] == [demo['observation_id']]
+    assert demo_report['input_scopes'] == ['public_demo']
+    explanation = client.post(f'/outings/{first}/explain', json={
+        'pet_id':'dog-a', 'question':'이번 외출을 요약해 주세요.'}).json()
+    assert any(c['kind'] == 'provenance' and '시연 자료' in c['text'] for c in explanation['claims'])
+    client.post(f'/outings/{first}/end?pet_id=dog-a')
+
+    second = client.post('/outings', json={'pet_id':'dog-a','input_mode':'uploaded_audio'}).json()['id']
+    user = upload(client, '&outing_id='+second)
+    user_report = client.get(f'/outings/{second}/summary?pet_id=dog-a').json()
+    assert user_report['demo_sample_seconds'] == 0
+    assert user_report['input_scopes'] == ['user_upload']
+    assert user_report['counted_observation_ids'] == [user['observation_id']]
+    comparison = client.post(f'/outings/{second}/explain', json={
+        'pet_id':'dog-a', 'question':'지난 외출과 비교해 주세요.'}).json()
+    assert comparison['report']['comparison']['status'] == 'incompatible_provenance'
+    assert not any(c['id'] == 'comparison.bark_rate' for c in comparison['claims'])

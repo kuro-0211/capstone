@@ -62,11 +62,13 @@ def to_out(row):
     reason = 'uncertain' if score is None or abs(score-threshold) <= .1 else 'routine_sample'
     if analysis.get('model_disagreement'):
         reason = 'model_disagreement'
+    original_available = (row.deleted_at is None and row.expires_at > utcnow()
+                          and path_for(row).is_file())
     return {'id': row.id, 'pet_id': row.pet_id, 'observation_id': row.observation_id,
             'duration_s': row.duration_s, 'training_consent': bool(row.training_consent),
             'expires_at': row.expires_at.isoformat()+'Z', 'deleted': row.deleted_at is not None,
             'analysis': analysis, 'review': review, 'verified': row.verified_at is not None,
-            'review_priority': reason, 'audio_available': row.deleted_at is None,
+            'review_priority': reason, 'audio_available': original_available,
             'source_note': ('공개 자료 시연: '+analysis['demo_source'] if analysis.get('demo_source') else
                             '사용자 업로드 음원')+'; 소리 발생 위치·감정은 자동 확정하지 않습니다.'}
 
@@ -198,7 +200,10 @@ player.addEventListener('timeupdate',()=>{{if(player.currentTime>={end_s:g})play
 </script>''') if start_s is not None else ''
     return HTMLResponse(f'''<!doctype html><html lang="ko"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PetMind 음원 근거</title><style>body{{background:#101018;color:#eee;font:18px sans-serif;padding:20px}}audio{{width:100%}}</style>
+<title>PetMind 음원 근거</title><style>
+body{{background:#FAFAFA;color:#0A0A0A;font:16px/1.5 sans-serif;margin:0;padding:24px}}
+h2{{font-size:24px;margin:0 0 16px}}audio{{width:100%}}p{{color:#6B6B6B}}
+</style>
 <h2>관찰 #{row.observation_id} · 원본 음원</h2>
 <audio controls preload="metadata" src="{html.escape(src+fragment,quote=True)}"></audio>
 <p>{source_title} · {row.duration_s:g}초</p>{segment_note}<p>소리의 발생 위치와 감정은 자동 확정하지 않습니다.</p>

@@ -4,6 +4,7 @@ import unicodedata
 from collections import deque
 
 INTENTS = {
+    'provenance': ('공개', '시연', '합성', '출처', '데이터셋'),
     'comparison': ('비교', '지난', '이전', '차이', '늘었', '줄었', '전보다'),
     'guardian_opinion': ('보호자', '의견', '메모', '확인한', '확인했', '사용자', 'tv', '텔레비전', '외부 소리'),
     'bark': ('짖', '소리', '소음', '발성'),
@@ -37,12 +38,12 @@ def select_facts(facts, question, limit=8):
                  fact.get('review_source', 'guardian_opinion') == 'guardian_opinion']
     kinds = list(requested)
     if 'summary' in kinds:
-        kinds += ['quality', 'bark', 'guardian_opinion', 'observation']
+        kinds += ['provenance', 'quality', 'bark', 'guardian_opinion', 'observation']
     if 'bark' in kinds:
         # A sound count must not conceal missing/undecidable observation time.
-        kinds += ['quality', 'guardian_opinion', 'observation']
+        kinds += ['provenance', 'quality', 'guardian_opinion', 'observation']
     if 'comparison' in kinds:
-        kinds += ['summary', 'quality']
+        kinds += ['summary', 'provenance', 'quality']
     kinds = list(dict.fromkeys(kinds))
     buckets = {kind: [f for f in facts if f['kind'] == kind] for kind in kinds}
     # Facts are built in observation-ID order, so prefer recent details.

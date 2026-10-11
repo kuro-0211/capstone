@@ -57,6 +57,10 @@ class _DashboardPageState extends State<DashboardPage> {
   List<dynamic> actions = const [];
   bool connected = false;
   bool busy = false;
+  String? connectionIssue;
+  List<String> _optionalFailures = const [];
+  bool _refreshing = false;
+  int _refreshSequence = 0;
   String notice = '';
   Timer? timer;
 
@@ -66,8 +70,8 @@ class _DashboardPageState extends State<DashboardPage> {
     petId = widget.initialPetId;
     client = widget.client ?? http.Client();
     refresh();
-    timer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (!busy) refresh(silent: true);
+    timer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!busy && !_refreshing) refresh(silent: true);
     });
   }
 
@@ -108,18 +112,31 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> refresh({bool silent = false}) async {
+    final sequence = ++_refreshSequence;
+    _refreshing = true;
     final requestedPet = petId;
+    final petQuery = Uri.encodeQueryComponent(requestedPet);
+    final petPath = Uri.encodeComponent(requestedPet);
+    final optionalFailures = <String>[];
     try {
       final values = await Future.wait([
-        _get('/care/latest?pet_id=$requestedPet'),
-        _get('/observations?pet_id=$requestedPet&limit=1'),
-        _get('/care/actions/recent?pet_id=$requestedPet&limit=8'),
-        _get('/timeline?pet_id=$requestedPet'),
-        _get('/metrics?pet_id=$requestedPet'),
-        _get('/media/catalog'),
-        _get('/pets/$requestedPet/profile'),
+        _get('/care/latest?pet_id=$petQuery'),
+        _get('/observations?pet_id=$petQuery&limit=1'),
+        _get('/care/actions/recent?pet_id=$petQuery&limit=8'),
+        _get('/timeline?pet_id=$petQuery'),
+        _get('/metrics?pet_id=$petQuery'),
+        if (silent) Future<dynamic>.value(catalog) else
+          _get('/media/catalog').catchError((Object _) {
+            optionalFailures.add('공개 자료 목록');
+            return catalog;
+          }),
+        if (silent) Future<dynamic>.value(profile) else
+          _get('/pets/$petPath/profile').catchError((Object _) {
+            optionalFailures.add('프로필');
+            return profile;
+          }),
       ]);
-      if (!mounted || requestedPet != petId) return;
+      if (!mounted || sequence != _refreshSequence || requestedPet != petId) return;
       setState(() {
         suggestion = values[0] as Map<String, dynamic>?;
         final observations = values[1] as List<dynamic>;
@@ -132,14 +149,20 @@ class _DashboardPageState extends State<DashboardPage> {
         audioFilename ??= audioFiles.isEmpty ? null : audioFiles.first['filename'].toString();
         profile = values[6] as Map<String, dynamic>?;
         connected = true;
-        if (!silent) notice = '최신 상태를 불러왔습니다.';
+        if (!silent) _optionalFailures = optionalFailures;
+        connectionIssue = _optionalFailures.isEmpty ? null
+          : '${_optionalFailures.join('·')}을 불러오지 못했습니다. 핵심 관찰 기록은 표시 중입니다.';
+        if (!silent) notice = connectionIssue ?? '최신 상태를 불러왔습니다.';
       });
     } catch (error) {
-      if (!mounted || requestedPet != petId) return;
+      if (!mounted || sequence != _refreshSequence || requestedPet != petId) return;
       setState(() {
         connected = false;
+        connectionIssue = '서버에 연결할 수 없습니다. 백엔드 실행을 확인한 뒤 다시 연결해 주세요.';
         if (!silent) notice = '서버 연결 실패: $error';
       });
+    } finally {
+      if (sequence == _refreshSequence) _refreshing = false;
     }
   }
 
@@ -304,6 +327,10 @@ class _DashboardPageState extends State<DashboardPage> {
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
           children: [
             _pageIntro(),
+            if (connectionIssue != null) ...[
+              const SizedBox(height: 20),
+              _connectionBanner(),
+            ],
             const SizedBox(height: 32),
             OutingsPanel(client: client, base: apiBase, petId: petId,
               observationId: observation?['id'] as int?,
@@ -362,6 +389,23 @@ class _DashboardPageState extends State<DashboardPage> {
         style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: GenesisTheme.secondaryInk)),
     ]);
   });
+
+  Widget _connectionBanner() => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: const Color(0xFFFFF7E6),
+      border: Border.all(color: const Color(0xFFF0DCA8)),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Wrap(spacing: 12, runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center, children: [
+        Icon(connected ? Icons.info_outline : Icons.cloud_off_outlined,
+          color: const Color(0xFF8A5A00)),
+        Text(connectionIssue!, style: Theme.of(context).textTheme.bodyMedium),
+        OutlinedButton(onPressed: () => refresh(), child: const Text('다시 연결')),
+      ]),
+  );
 
   Widget _sectionTitle(String title, String description) => Column(
     crossAxisAlignment: CrossAxisAlignment.start, children: [

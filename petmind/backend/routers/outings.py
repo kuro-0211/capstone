@@ -101,7 +101,10 @@ def clip(observation_id: int, pet_id: str, db=Depends(get_db)):
     # End time is enforced after seek/play, including seeking outside the interval.
     return HTMLResponse(f'''<!doctype html><html lang="ko"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>PetMind 관찰 근거</title>
-<style>body{{font:18px sans-serif;background:#101018;color:#eee;margin:24px}}video{{width:100%;max-height:65vh}}button{{font:inherit;padding:12px}}p{{line-height:1.6}}</style>
+<style>body{{font:16px/1.5 sans-serif;background:#FAFAFA;color:#0A0A0A;margin:24px}}
+h1{{font-size:24px}}video{{width:100%;max-height:65vh;background:#0A0A0A}}
+button{{font:inherit;color:#fff;background:#6063ED;border:0;border-radius:6px;padding:10px 16px;cursor:pointer}}
+button:hover{{background:#4F46E5}}p{{line-height:1.6;color:#6B6B6B}}</style>
 <h1>관찰 #{observation.id} · 근거 구간</h1><p>{html.escape(observation.summary)}</p>
 <p>영상 {media.start_s:g}~{media.end_s:g}초 · 준비된 파일 재생 / 실시간 아님</p>
 <video id="v" controls muted playsinline preload="metadata" src="{html.escape(src, quote=True)}"></video>

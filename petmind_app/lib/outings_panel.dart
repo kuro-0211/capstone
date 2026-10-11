@@ -38,6 +38,19 @@ class _OutingsPanelState extends State<OutingsPanel> {
       'synthetic_demo': '합성 시연'};
     return '$when · ${outing['status'] == 'active' ? '진행 중' : '종료'} · ${modes[outing['input_mode']] ?? outing['input_mode']}';
   }
+  String providerLabel(dynamic value) {
+    final raw = value?.toString() ?? '';
+    if (raw.startsWith('gemini:')) return 'Gemini 근거 선택·기록 기반 설명';
+    if (raw == 'grounded-template-fallback') return '기록 기반 설명 (외부 설명 대체)';
+    if (raw == 'grounded-template') return '기록 기반 설명';
+    return '설명 방식 확인 필요';
+  }
+  String retrievalLabel(dynamic value) => switch (value) {
+    'mcp' => 'MCP 기록 검색',
+    'local' => '로컬 기록 검색',
+    'local-fallback' => '로컬 기록 검색 (MCP 대체)',
+    _ => '검색 방식 확인 필요',
+  };
 
   @override
   void initState() { super.initState(); load(); }
@@ -85,6 +98,7 @@ class _OutingsPanelState extends State<OutingsPanel> {
   }
 
   Future<void> run(Future<void> Function() action) async {
+    if (busy) return;
     setState(() { busy = true; error = ''; });
     try { await action(); } catch (e) { if (mounted) setState(() => error = '$e'); }
     finally { if (mounted) setState(() => busy = false); }
@@ -130,6 +144,11 @@ class _OutingsPanelState extends State<OutingsPanel> {
       _metric('판단 불가', '${data['unknown_seconds'] ?? 0}초'),
       _metric('짖음 후보', '${data['bark_candidate_count'] ?? 0}회'),
     ]),
+    if ((data['demo_sample_seconds'] as num? ?? 0) > 0) Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Text('공개·합성 시연 표본 ${data['demo_sample_seconds']}초 포함 · 실제 반려견 기록과 구분해 주세요.',
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF8A5A00))),
+    ),
     const SizedBox(height: 12),
     Text('정지 ${data['seconds_by_label']?['still'] ?? 0}초 · 이동 ${data['seconds_by_label']?['moving'] ?? 0}초 · 회전 ${data['seconds_by_label']?['spinning'] ?? 0}초 · 왕복 ${data['seconds_by_label']?['pacing'] ?? 0}초',
       style: Theme.of(context).textTheme.bodySmall),
@@ -193,7 +212,8 @@ class _OutingsPanelState extends State<OutingsPanel> {
             OutlinedButton(onPressed: busy ? null : () => explain('지난 외출과 비교해 주세요.'), child: const Text('지난 외출과 비교')),
           ]),
           if (explanation != null) ...[
-            Text('설명: ${explanation!['provider']} · 검색: ${explanation!['retrieval_mode']}'),
+            Text('설명: ${providerLabel(explanation!['provider'])} · ${retrievalLabel(explanation!['retrieval_mode'])}',
+              style: Theme.of(context).textTheme.bodySmall),
             if ((explanation!['claims'] as List).isEmpty) Text(explanation!['answer']),
             for (final claim in explanation!['claims']) Padding(padding: const EdgeInsets.only(top: 8), child: Column(
               crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -206,7 +226,10 @@ class _OutingsPanelState extends State<OutingsPanel> {
                     } else { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('관찰 #$id: 연결된 영상이 없습니다.'))); }
                   }, child: Text('근거 #$id'))]),
               ])),
-            if (explanation!['report']['comparison']['status'] != 'sample_rate_comparison')
+            if (explanation!['report']['comparison']['status'] == 'incompatible_provenance')
+              const Text('이전 외출 비교: 공개·합성 시연 자료와 사용자 자료를 섞어 비교하지 않습니다.'),
+            if (explanation!['report']['comparison']['status'] != 'sample_rate_comparison' &&
+                explanation!['report']['comparison']['status'] != 'incompatible_provenance')
               const Text('이전 외출 비교: 같은 입력 방식의 충분한 기록이 필요합니다.'),
           ],
           const SizedBox(height: 24),

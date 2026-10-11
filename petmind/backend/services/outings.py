@@ -37,6 +37,14 @@ def rows_for_outing(db, outing_id):
         OutingObservation.outing_id == outing_id).order_by(ObservationLog.id)).all()
 
 
+def input_scope(row, audio):
+    if row.source in {'synthetic_demo', 'public_media'}:
+        return 'public_demo'
+    if audio:
+        return 'public_demo' if json.loads(audio.analysis_json).get('demo_source') else 'user_upload'
+    return row.source
+
+
 def moment(db, row, related=None):
     from ..routers.outings import MEDIA_ROOT
     from ..routers.audio_clips import FOLDER as AUDIO_ROOT
@@ -53,7 +61,7 @@ def moment(db, row, related=None):
                            and exists(AUDIO_ROOT, audio.filename))
     data = json.loads(row.context_json)
     return {'observation_id': row.id, 'observed_at': row.observed_at.isoformat() + 'Z',
-            'source': row.source, 'summary': row.summary,
+            'source': row.source, 'input_scope': input_scope(row, audio), 'summary': row.summary,
             'reason': '반복 움직임 후보' if data['motion']['dominant'] in {'pacing', 'spinning'} else
                       '짖음 후보' if data['bark']['count'] else
                       '영상 판단 불가' if data['motion']['dominant'] == 'unknown' else '관찰 근거',
@@ -88,6 +96,7 @@ def aggregate(db, rows, clip_start=None, clip_end=None):
         audio_by_id.update((a.observation_id, a) for a in db.scalars(
             select(AudioClipLog).where(AudioClipLog.observation_id.in_(chunk))))
     kept, skipped, boundaries, count, seconds = [], [], [], 0, 0.0
+    demo_ids, demo_seconds, scopes = [], 0.0, set()
     for row in rows:
         data = json.loads(row.context_json)
         window = float(data['window_s'])
@@ -120,6 +129,11 @@ def aggregate(db, rows, clip_start=None, clip_end=None):
         lanes[lane].append((start, end))
         kept.append(row)
         seconds += window
+        scope = input_scope(row, audio)
+        scopes.add(scope)
+        if scope == 'public_demo':
+            demo_ids.append(row.id)
+            demo_seconds += window
         count += data['bark']['count']
         motion = data['motion']['seconds_by_label']
         known = 0.0
@@ -137,6 +151,9 @@ def aggregate(db, rows, clip_start=None, clip_end=None):
     return {'observation_count': len(rows), 'counted_observation_ids': [r.id for r in kept],
             'skipped_overlap_ids': skipped, 'excluded_day_boundary_ids': boundaries,
             'sample_seconds': round(seconds, 3),
+            'demo_sample_seconds': round(demo_seconds, 3),
+            'demo_observation_ids': demo_ids,
+            'input_scopes': sorted(scopes),
             'seconds_by_label': {k: round(durations[k], 3) for k in sorted(LABELS)},
             'unknown_seconds': round(durations['unknown'], 3),
             'bark_candidate_count': count,
@@ -163,6 +180,10 @@ def summary_facts(current, scope='이번 외출에 연결된'):
               'observation_ids': ids, 'kind': 'quality'},
              {'id': 'current.bark', 'text': f"중복 제외 저장 구간의 짖음 후보는 {current['bark_candidate_count']}회입니다.",
               'observation_ids': ids, 'kind': 'bark'}]
+    if current['demo_sample_seconds']:
+        facts.append({'id': 'current.demo_scope', 'kind': 'provenance',
+            'text': f"이 요약에는 공개·합성 시연 자료 {current['demo_sample_seconds']:g}초가 포함됩니다. 실제 반려견 관찰과 구분해야 합니다.",
+            'observation_ids': current['demo_observation_ids']})
     for item in current['moments']:
         facts.append({'id': f"observation.{item['observation_id']}", 'text': item['summary'],
                       'observation_ids': [item['observation_id']], 'kind': 'observation'})
@@ -188,9 +209,15 @@ def facts_for_report(db, outing, question):
     comparison = {'status': 'no_previous_compatible_session'}
     if previous:
         old = summary(db, previous)
-        comparable = (bool(current['sample_seconds'] and old['sample_seconds']) and
-                      current['sources'] == old['sources'])
-        comparison = {'status': 'sample_rate_comparison' if comparable else 'insufficient_samples',
+        has_samples = bool(current['sample_seconds'] and old['sample_seconds'])
+        same_source = current['sources'] == old['sources']
+        same_scope = (len(current['input_scopes']) == len(old['input_scopes']) == 1 and
+                      current['input_scopes'] == old['input_scopes'])
+        comparable = has_samples and same_source and same_scope
+        status = ('sample_rate_comparison' if comparable else
+                  'incompatible_provenance' if has_samples and same_source and not same_scope else
+                  'insufficient_samples')
+        comparison = {'status': status,
                       'previous_outing': outing_out(previous), 'previous_summary': old}
         if comparable:
             facts.append({'id': 'comparison.bark_rate', 'kind': 'comparison',
@@ -249,6 +276,8 @@ def narrate(report, facts, question, use_gemini=True, retrieval_mode='local', re
                 raise ValueError('unsupported fact selection')
             chosen = [allowed[k] for k in dict.fromkeys(selected)]
             required_kinds = ({'quality'} | set(question_intents(question))) & {f['kind'] for f in facts}
+            if any(f['kind'] == 'provenance' for f in facts):
+                required_kinds.add('provenance')
             if not required_kinds.issubset({f['kind'] for f in chosen}):
                 # Do not let generation silently omit uncertainty or guardian
                 # evidence retrieved for a multi-part question.

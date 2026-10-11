@@ -6,13 +6,19 @@ import 'audio_input.dart';
 import 'clip_view.dart';
 import 'genesis_theme.dart';
 
+typedef AudioInputBuilder = Widget Function(
+  void Function(String, Uint8List) onSelected,
+  void Function(String) onError,
+);
+
 class AudioPanel extends StatefulWidget {
   const AudioPanel({super.key, required this.client, required this.base, required this.petId,
-    required this.onChanged, this.outing});
+    required this.onChanged, this.outing, this.inputBuilder});
   final http.Client client;
   final String base, petId;
   final Map<String, dynamic>? outing;
   final VoidCallback onChanged;
+  final AudioInputBuilder? inputBuilder;
   @override
   State<AudioPanel> createState() => _AudioPanelState();
 }
@@ -26,15 +32,30 @@ class _AudioPanelState extends State<AudioPanel> {
   bool store = false, training = false, busy = false;
   bool publicDemo = false;
   String publicSource = '';
-  int retention = 7, epoch = 0;
+  int retention = 7, epoch = 0, uploadRevision = 0;
   String get petQuery => 'pet_id=${Uri.encodeQueryComponent(widget.petId)}';
+  String scoreLabel(dynamic value) => value is num
+    ? '${(value * 100).toStringAsFixed(1)} / 100' : '값 없음';
+  String reviewLabel(dynamic value) => const {
+    'pet_vocalization': '반려견 소리',
+    'external_or_tv': 'TV·외부 소리',
+    'other': '기타 소리',
+    'uncertain': '판단하기 어려움',
+  }[value] ?? '판정 없음';
+  String expiryLabel(dynamic value) {
+    final time = DateTime.tryParse(value?.toString() ?? '')?.toUtc()
+      .add(const Duration(hours: 9));
+    if (time == null) return '정보 없음';
+    return '${time.year}년 ${time.month}월 ${time.day}일 '
+      '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')} (한국 시간)';
+  }
   @override
   void initState() { super.initState(); load(); }
   @override
   void didUpdateWidget(covariant AudioPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.petId != widget.petId) {
-      epoch++; clips = []; reviewQueue = []; queueOnly = false; bytes = null; filename = ''; store = false; training = false; error = ''; publicDemo = false; publicSource = '';
+      epoch++; uploadRevision++; clips = []; reviewQueue = []; queueOnly = false; bytes = null; filename = ''; store = false; training = false; error = ''; publicDemo = false; publicSource = ''; retention = 7;
       load();
     }
   }
@@ -84,7 +105,12 @@ class _AudioPanelState extends State<AudioPanel> {
     await run(() async {
       decode(await widget.client.post(Uri.parse('${widget.base}/audio-clips/upload?$query'),
         headers: {'Content-Type':'audio/wav'}, body: content).timeout(const Duration(seconds: 60)));
-      if (mounted && pet == widget.petId) setState(() { bytes = null; filename = ''; });
+      if (mounted && pet == widget.petId) {
+        setState(() {
+          bytes = null; filename = ''; publicDemo = false; publicSource = '';
+          store = false; training = false; retention = 7; uploadRevision++;
+        });
+      }
     });
   }
   Future<void> review(Map<String, dynamic> item) async {
@@ -122,10 +148,13 @@ class _AudioPanelState extends State<AudioPanel> {
     subtitle: Text('30초 이하 WAV · 모델 학습 참여는 별도 선택',
       style: Theme.of(context).textTheme.bodySmall),children:[
     Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-      audioInput((name,data) { if (mounted) setState(() { filename = name; bytes = data; }); },
-        (message) { if (mounted) setState(() => error = message); }),
+      KeyedSubtree(key: ValueKey(uploadRevision), child: (widget.inputBuilder ?? audioInput)(
+        (name,data) { if (mounted) setState(() { filename = name; bytes = data; }); },
+        (message) { if (mounted) setState(() => error = message); })),
       if (filename.isNotEmpty) Text('선택: $filename'),
-      CheckboxListTile(value: publicDemo, onChanged: busy ? null : (v) => setState(() { publicDemo = v!; if (publicDemo) training = false; }),
+      CheckboxListTile(value: publicDemo, onChanged: busy ? null : (v) => setState(() {
+        publicDemo = v!; publicSource = ''; if (publicDemo) training = false;
+      }),
         title: const Text('공개 자료 시연용 음원')),
       if (publicDemo) TextField(onChanged: (v) => publicSource = v,
         decoration: const InputDecoration(labelText: '출처 · 데이터셋/파일명', hintText: '예: ESC-50 / 1-100032-A-0.wav')),
@@ -161,7 +190,7 @@ class _AudioPanelState extends State<AudioPanel> {
               item['review_priority'] == 'uncertain' ? '확인 권장: 판별 근거가 부족합니다.' : '일반 구간 확인 표본',
               style: TextStyle(color: item['review_priority'] == 'routine_sample'
                 ? GenesisTheme.secondaryInk : const Color(0xFF8A5A00)))),
-          if (model != null) Text('실험 LSTM 개 소리 점수 ${model['dog_score']} · 기준 ${model['threshold']} (정확도·확률 아님)',
+          if (model != null) Text('실험 LSTM 개 소리 점수 ${scoreLabel(model['dog_score'])} · 기준 ${scoreLabel(model['threshold'])} (정확도·확률 아님)',
             style: Theme.of(context).textTheme.bodySmall),
           if (model?['windows'] is List && (model['windows'] as List).isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -182,8 +211,8 @@ class _AudioPanelState extends State<AudioPanel> {
             }),
           ],
           if (model == null) const Text('실험 음성 모델이 준비되지 않았거나 분석에 실패했습니다. 에너지 후보만 기록했습니다.'),
-          if ((item['review'] as Map).isNotEmpty) Text('${item['review']['source'] == 'demo_operator_opinion' ? '시연 담당자 의견' : '보호자 의견'}: ${item['review']['label']} · ${item['review']['note']}'),
-          Text('학습 참여 ${item['training_consent'] == true ? '동의' : '미동의'} · 원본 만료 ${item['expires_at']}'),
+          if ((item['review'] as Map).isNotEmpty) Text('${item['review']['source'] == 'demo_operator_opinion' ? '시연 담당자 의견' : '보호자 의견'}: ${reviewLabel(item['review']['label'])} · ${item['review']['note']}'),
+          Text('학습 참여 ${item['training_consent'] == true ? '동의' : '미동의'} · 원본 만료 ${expiryLabel(item['expires_at'])}'),
           Wrap(spacing:8,children:[
             TextButton(onPressed:item['audio_available'] == true ? () => play(item) : null,child:Text(item['deleted'] == true ? '원본 삭제됨' : '음원 듣기')),
             TextButton(onPressed:busy ? null : () => review(item),child:const Text('확인 의견')),
