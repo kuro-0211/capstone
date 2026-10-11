@@ -770,7 +770,7 @@ class SignalPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xff12121c));
+    canvas.drawRect(Offset.zero & size, Paint()..color = GenesisTheme.background);
     if (data.length < 2) return;
     final maxTime = (data.last['t'] as num).toDouble();
     final maxRms = trajectory ? 1.0 : data.map((point) => (point['rms'] as num).toDouble()).fold<double>(.00001, (a, b) => a > b ? a : b);
@@ -785,7 +785,7 @@ class SignalPainter extends CustomPainter {
         path.lineTo(x * size.width, y * size.height);
       }
     }
-    canvas.drawPath(path, Paint()..color = const Color(0xffb69dff)..style = PaintingStyle.stroke..strokeWidth = 2);
+    canvas.drawPath(path, Paint()..color = GenesisTheme.secondaryInk..style = PaintingStyle.stroke..strokeWidth = 2);
   }
 
   @override
