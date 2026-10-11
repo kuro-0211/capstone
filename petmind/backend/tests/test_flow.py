@@ -49,6 +49,17 @@ def evaluate(client, observation):
     return response.json()
 
 
+def test_health_reports_audio_checkpoint_presence_without_claiming_validity(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main, 'ROOT', tmp_path)
+    monkeypatch.setattr(main, 'SessionLocal', client.sessions)
+    key = 'audio_lstm_checkpoint_present'
+    assert client.get('/health').json()['components'][key] is False
+    checkpoint = tmp_path/'artifacts/audio_lstm/esc50_lstm.pt'
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b'not a valid model')
+    assert client.get('/health').json()['components'][key] is True
+
+
 def test_observe_evaluate_approve_receive_complete_and_persist(client):
     observation = observe(client)
     suggestion = evaluate(client, observation)

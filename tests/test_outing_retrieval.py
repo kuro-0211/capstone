@@ -35,6 +35,14 @@ def test_question_normalization_and_sound_uncertainty():
     assert select_facts(facts, '환율은?') == []
 
 
+def test_duration_question_does_not_pull_unrelated_sound_or_opinion():
+    facts = [{'id': kind, 'kind': kind} for kind in
+             ('summary', 'provenance', 'quality', 'bark', 'guardian_opinion', 'observation')]
+    for question in ('녹음이 총 몇 분이나 쌓였나요?', '얼마나 오래 봤는지 알려줘'):
+        assert {f['kind'] for f in select_facts(facts, question)} == {
+            'summary', 'provenance', 'quality'}
+
+
 def test_generated_selection_cannot_hide_quality(monkeypatch):
     from dataclasses import replace
     from petmind.backend.services import outings

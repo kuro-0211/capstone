@@ -51,6 +51,11 @@ class _OutingsPanelState extends State<OutingsPanel> {
     'local-fallback' => '로컬 기록 검색 (MCP 대체)',
     _ => '검색 방식 확인 필요',
   };
+  bool comparisonRequested(dynamic question) {
+    final text = question?.toString() ?? '';
+    return const ['비교', '지난', '이전', '차이', '늘었', '줄었', '전보다']
+      .any(text.contains);
+  }
 
   @override
   void initState() { super.initState(); load(); }
@@ -226,9 +231,11 @@ class _OutingsPanelState extends State<OutingsPanel> {
                     } else { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('관찰 #$id: 연결된 영상이 없습니다.'))); }
                   }, child: Text('근거 #$id'))]),
               ])),
-            if (explanation!['report']['comparison']['status'] == 'incompatible_provenance')
+            if (comparisonRequested(explanation!['question']) &&
+                explanation!['report']['comparison']['status'] == 'incompatible_provenance')
               const Text('이전 외출 비교: 공개·합성 시연 자료와 사용자 자료를 섞어 비교하지 않습니다.'),
-            if (explanation!['report']['comparison']['status'] != 'sample_rate_comparison' &&
+            if (comparisonRequested(explanation!['question']) &&
+                explanation!['report']['comparison']['status'] != 'sample_rate_comparison' &&
                 explanation!['report']['comparison']['status'] != 'incompatible_provenance')
               const Text('이전 외출 비교: 같은 입력 방식의 충분한 기록이 필요합니다.'),
           ],

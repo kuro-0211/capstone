@@ -21,6 +21,7 @@ void main() {
             'started_at': '2026-10-11T08:00:00Z', 'input_mode': 'uploaded_audio'}]
         : path.endsWith('/explain')
         ? {'provider': 'grounded-template', 'retrieval_mode': 'local',
+            'question': jsonDecode(request.body)['question'],
             'claims': [], 'answer': '기록 비교 불가',
             'report': {'comparison': {'status': 'incompatible_provenance'}}}
         : path.endsWith('/summary') || path == '/outings/day'
@@ -34,6 +35,10 @@ void main() {
         petId: 'demo-dog', onActiveChanged: (_) {})))));
     await tester.pumpAndSettle();
     expect(find.textContaining('공개·합성 시연 표본 5초 포함'), findsWidgets);
+    await tester.enterText(find.byType(TextField).first, '얼마나 오래 봤나요?');
+    await tester.tap(find.text('근거 기반 요약'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('이전 외출 비교:'), findsNothing);
     await tester.tap(find.text('지난 외출과 비교'));
     await tester.pumpAndSettle();
     expect(find.textContaining('섞어 비교하지 않습니다'), findsOneWidget);

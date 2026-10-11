@@ -252,7 +252,7 @@ Pi의 `/home/pi/Desktop/PetMind_Test`에서 `sh run_once.sh` 또는 전용 `.ven
 
 ### 음원·외출 시연
 
-공개 자료만으로 새 PC에서 흐름을 재현하려면 저장소 루트에서 `python -m scripts.prepare_demo_audio`를 실행한다. 고정된 ESC-50 평가 분할의 Dog 2개·rain 1개만 내려받아 파일 해시·공식 메타데이터·WAV 형식을 확인하고 `artifacts/datasets/esc50_demo/audio/`에 둔다. 전체 2,000개 음원 다운로드나 모델 재학습은 필요하지 않다. 세 음원은 **화면 시연 표본**이며 새 독립 성능 평가 자료가 아니다.
+공개 자료만으로 새 PC에서 입력·검토·귀가 흐름을 재현하려면 저장소 루트에서 `python -m scripts.prepare_demo_audio`를 실행한다. 고정된 ESC-50 평가 분할의 Dog 2개·rain 1개만 내려받아 파일 해시·공식 메타데이터·WAV 형식을 확인하고 `artifacts/datasets/esc50_demo/audio/`에 둔다. 전체 2,000개 음원 다운로드나 모델 재학습은 필요하지 않다. **오디오 LSTM 점수 표시에는 별도 로컬 체크포인트가 필요**하다. `/health`의 `audio_lstm_checkpoint_present`로 파일 존재 여부를 먼저 확인한다. 이 값은 모델 정상 추론을 보증하지 않으며, 체크포인트가 없거나 추론에 실패하면 화면은 모델 미준비/실패를 명시하고 에너지 후보만 기록한다. 세 음원은 화면 시연 표본이며 새 독립 성능 평가 자료가 아니다.
 
 1. 백엔드와 Flutter를 실행하고 반려견을 선택한다.
 2. **사용자 음원** 모드에서 외출을 시작한다. 30초 이하·12MB 이하 WAV를 선택하고 개인 저장 동의를 체크한다. 공통 모델 학습 참여는 별도 선택이다.
@@ -314,7 +314,7 @@ API 문서: `http://127.0.0.1:8010/docs`. Flutter의 기본 API 주소는 `http:
 
 | 항목 | 확인 결과 | 해석·근거 |
 |---|---|---|
-| 최신 로컬 Python | **110 passed** | 모델을 준비한 개발 환경; 이전 복제본 65 passed/1 skipped는 과거 결과 |
+| 최신 로컬 Python | **112 passed** | 모델을 준비한 개발 환경; 이전 복제본 65 passed/1 skipped는 과거 결과 |
 | Flutter | 테스트 **9 passed**, `flutter analyze` 오류 없음, 웹 빌드 성공 | 실제 브라우저 음원·귀가 흐름 확인; 녹화 파일 미확보 |
 | 음성 LSTM — ESC-50 | 재현율·정밀도·F1 **62.5%**, 개 소리 5/8 감지 | 양성 표본 8개, 실제 가정 정확도 아님 |
 | 음성 LSTM — FSD50K | 재현율 **28.3%**, 정밀도 **94.4%**, F1 **43.6%** | 개 소리 17/60 감지, 비개 소리 오탐 1/60; [평가](docs/evidence/audio_external_fsd50k.json) |
