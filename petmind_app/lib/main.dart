@@ -311,11 +311,18 @@ class _DashboardPageState extends State<DashboardPage> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16),
-            child: Chip(
-              avatar: Icon(Icons.circle, size: 12,
-                color: connected ? GenesisTheme.success : GenesisTheme.error),
-              label: Text(connected ? '연결됨' : '연결 끊김'),
-            ),
+            child: Center(child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(color: const Color(0xFFF4F4F5),
+                borderRadius: BorderRadius.circular(999)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.circle, size: 12,
+                  color: connected ? GenesisTheme.success : GenesisTheme.error),
+                const SizedBox(width: 8),
+                Text(connected ? '연결됨' : '연결 끊김', softWrap: false,
+                  style: Theme.of(context).textTheme.labelMedium),
+              ]),
+            )),
           ),
         ],
       ),
