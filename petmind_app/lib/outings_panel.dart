@@ -195,7 +195,7 @@ class _OutingsPanelState extends State<OutingsPanel> {
     if ((data['demo_sample_seconds'] as num? ?? 0) > 0) Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Text('공개·합성 시연 표본 ${data['demo_sample_seconds']}초 포함 · 실제 반려견 기록과 구분해 주세요.',
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF8A5A00))),
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: GenesisTheme.warningInk)),
     ),
     const SizedBox(height: 12),
     Text('정지 ${data['seconds_by_label']?['still'] ?? 0}초 · 이동 ${data['seconds_by_label']?['moving'] ?? 0}초 · 회전 ${data['seconds_by_label']?['spinning'] ?? 0}초 · 왕복 ${data['seconds_by_label']?['pacing'] ?? 0}초',
@@ -317,7 +317,7 @@ class _OutingsPanelState extends State<OutingsPanel> {
           Text(dayExplanation!['note']),
         ],
         if (busy) const LinearProgressIndicator(),
-        if (error.isNotEmpty) Text(error, style: const TextStyle(color: Colors.orange)),
+        if (error.isNotEmpty) Text(error, style: const TextStyle(color: GenesisTheme.warningInk)),
       ],
     )));
   }

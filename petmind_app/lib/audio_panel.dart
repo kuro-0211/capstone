@@ -206,7 +206,7 @@ class _AudioPanelState extends State<AudioPanel> {
             label: Text(item['review_priority'] == 'model_disagreement' ? '확인 권장: 모델과 에너지 감지 결과가 다릅니다.' :
               item['review_priority'] == 'uncertain' ? '확인 권장: 판별 근거가 부족합니다.' : '일반 구간 확인 표본',
               style: TextStyle(color: item['review_priority'] == 'routine_sample'
-                ? GenesisTheme.secondaryInk : const Color(0xFF8A5A00)))),
+              ? GenesisTheme.secondaryInk : GenesisTheme.warningInk))),
           if (model != null) Text('실험 LSTM 개 소리 점수 ${scoreLabel(model['dog_score'])} · 기준 ${scoreLabel(model['threshold'])} (정확도·확률 아님)',
             style: Theme.of(context).textTheme.bodySmall),
           if (model?['windows'] is List && (model['windows'] as List).isNotEmpty) ...[
@@ -247,7 +247,7 @@ class _AudioPanelState extends State<AudioPanel> {
         ]))));
       }),
       if (busy) const LinearProgressIndicator(),
-      if (error.isNotEmpty) Text(error,style:const TextStyle(color:Colors.orange)),
+      if (error.isNotEmpty) Text(error,style:const TextStyle(color: GenesisTheme.warningInk)),
     ])),
   ]);
 }

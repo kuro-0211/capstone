@@ -417,7 +417,7 @@ class _DashboardPageState extends State<DashboardPage> {
     child: Wrap(spacing: 12, runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center, children: [
         Icon(connected ? Icons.info_outline : Icons.cloud_off_outlined,
-          color: const Color(0xFF8A5A00)),
+          color: GenesisTheme.warningInk),
         Text(connectionIssue!, style: Theme.of(context).textTheme.bodyMedium),
         OutlinedButton(onPressed: () => refresh(), child: const Text('다시 연결')),
       ]),

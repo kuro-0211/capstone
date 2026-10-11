@@ -15,6 +15,7 @@ abstract final class GenesisTheme {
   static const border = Color(0xFFE8E8EC);
   static const success = Color(0xFF10B981);
   static const warning = Color(0xFFF59E0B);
+  static const warningInk = Color(0xFF8A5A00);
   static const error = Color(0xFFEF4444);
 
   static const _fallback = <String>[
