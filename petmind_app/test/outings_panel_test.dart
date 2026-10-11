@@ -7,6 +7,40 @@ import 'package:http/testing.dart';
 import 'package:petmind_app/outings_panel.dart';
 
 void main() {
+  testWidgets('day summary failure keeps outing report visible and recovers', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var dayOnline = false;
+    final report = {'moments': [], 'sample_seconds': 5,
+      'demo_sample_seconds': 0, 'unknown_seconds': 5, 'bark_candidate_count': 0};
+    final client = MockClient((request) async {
+      final path = request.url.path;
+      if (path == '/outings/day' && !dayOnline) {
+        return http.Response('{"detail":"unavailable"}', 503);
+      }
+      final dynamic result = path == '/outings'
+        ? [{'id': 'outing-1', 'status': 'ended',
+            'started_at': '2026-10-11T08:00:00Z', 'input_mode': 'uploaded_audio'}]
+        : report;
+      return http.Response(jsonEncode(result), 200);
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
+      child: OutingsPanel(client: client, base: 'http://localhost',
+        petId: 'demo-dog', onActiveChanged: (_) {})))));
+    await tester.pumpAndSettle();
+    expect(find.text('분석 표본'), findsOneWidget);
+    expect(find.text('5초'), findsWidgets);
+    expect(find.textContaining('외출 기록은 표시 중'), findsOneWidget);
+    dayOnline = true;
+    await tester.tap(find.text('외출 기록 새로고침'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('외출 기록은 표시 중'), findsNothing);
+    expect(find.text('분석 표본'), findsNWidgets(2));
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('demo totals and incompatible previous outing are explained', (tester) async {
     tester.view.physicalSize = const Size(1200, 1800);
     tester.view.devicePixelRatio = 1;

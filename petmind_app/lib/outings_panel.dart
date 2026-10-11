@@ -92,12 +92,16 @@ class _OutingsPanelState extends State<OutingsPanel> {
       if (!outings.any((o) => o['id'] == selected)) selected = active?['id'] ?? (outings.isEmpty ? null : outings.first['id']);
       widget.onActiveChanged(active);
       final loaded = selected == null ? null : await request('/outings/$selected/summary?$petQuery');
-      final daily = await request('/outings/day?$petQuery&day=$dayText');
+      dynamic daily;
+      var dayUnavailable = false;
+      try { daily = await request('/outings/day?$petQuery&day=$dayText'); }
+      catch (_) { dayUnavailable = true; }
       if (!mounted || epoch != generation || pet != widget.petId) return;
       setState(() {
         report = loaded is Map ? Map<String, dynamic>.from(loaded) : null;
         dayReport = daily is Map ? Map<String, dynamic>.from(daily) : null;
-        explanation = null; dayExplanation = null; error = '';
+        explanation = null; dayExplanation = null;
+        error = dayUnavailable ? '하루 요약을 불러오지 못했습니다. 외출 기록은 표시 중입니다.' : '';
       });
     } catch (e) { if (mounted && epoch == generation) setState(() => error = '외출 기록 조회 실패: $e'); }
   }

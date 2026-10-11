@@ -315,7 +315,7 @@ API 문서: `http://127.0.0.1:8010/docs`. Flutter의 기본 API 주소는 `http:
 | 항목 | 확인 결과 | 해석·근거 |
 |---|---|---|
 | 최신 로컬 Python | **112 passed** | 모델을 준비한 개발 환경; 이전 복제본 65 passed/1 skipped는 과거 결과 |
-| Flutter | 테스트 **9 passed**, `flutter analyze` 오류 없음, 웹 빌드 성공 | 실제 브라우저 음원·귀가 흐름 확인; 녹화 파일 미확보 |
+| Flutter | 테스트 **11 passed**, `flutter analyze` 오류 없음, 웹 빌드 성공 | 실제 브라우저 음원·귀가 흐름 확인; 녹화 파일 미확보 |
 | 음성 LSTM — ESC-50 | 재현율·정밀도·F1 **62.5%**, 개 소리 5/8 감지 | 양성 표본 8개, 실제 가정 정확도 아님 |
 | 음성 LSTM — FSD50K | 재현율 **28.3%**, 정밀도 **94.4%**, F1 **43.6%** | 개 소리 17/60 감지, 비개 소리 오탐 1/60; [평가](docs/evidence/audio_external_fsd50k.json) |
 | 추가 학습·CLAP | LSTM 추가 학습 개선 미확인; CLAP FSD F1 83.5% | CLAP 사전학습 중복 가능성, 모델 자동 교체 안 함 |

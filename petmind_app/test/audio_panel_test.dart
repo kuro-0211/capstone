@@ -7,6 +7,41 @@ import 'package:http/testing.dart';
 import 'package:petmind_app/audio_panel.dart';
 
 void main() {
+  testWidgets('review queue failure still shows clips and recovers', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1500);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var queueOnline = false;
+    final clip = {'id': 'clip-1', 'observation_id': 9, 'duration_s': 5,
+      'training_consent': false, 'expires_at': '2026-10-18T00:00:00Z',
+      'deleted': false, 'audio_available': true, 'review_priority': 'uncertain',
+      'source_note': '공개 시연 음원', 'analysis': {}, 'review': {}};
+    final client = MockClient((request) async {
+      if (request.url.path.endsWith('/review-queue')) {
+        if (!queueOnline) return http.Response('{"detail":"unavailable"}', 503);
+        return http.Response(jsonEncode({'items': [clip]}), 200,
+          headers: {'content-type': 'application/json; charset=utf-8'});
+      }
+      return http.Response(jsonEncode([clip]), 200,
+        headers: {'content-type': 'application/json; charset=utf-8'});
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
+      child: AudioPanel(client: client, base: 'http://localhost', petId: 'dog-a',
+        onChanged: () {})))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('사용자 음원 · 보호자 확인'));
+    await tester.pumpAndSettle();
+    expect(find.text('관찰 #9 · 5초'), findsOneWidget);
+    expect(find.textContaining('전체 음원 목록은 표시 중'), findsOneWidget);
+    queueOnline = true;
+    await tester.tap(find.text('음원 목록 새로고침'));
+    await tester.pumpAndSettle();
+    expect(find.text('확인 추천 1건 보기'), findsOneWidget);
+    expect(find.textContaining('전체 음원 목록은 표시 중'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('each upload requires a fresh source and consent', (tester) async {
     tester.view.physicalSize = const Size(1200, 1800);
     tester.view.devicePixelRatio = 1;

@@ -69,11 +69,18 @@ class _AudioPanelState extends State<AudioPanel> {
     try {
       final data = decode(await widget.client.get(Uri.parse('${widget.base}/audio-clips?$petQuery')).timeout(const Duration(seconds: 20)));
       if (!mounted || token != epoch) { return; }
-      final queue = decode(await widget.client.get(Uri.parse('${widget.base}/audio-clips/review-queue?$petQuery')).timeout(const Duration(seconds: 20)));
+      dynamic queue;
+      var queueUnavailable = false;
+      try {
+        queue = decode(await widget.client.get(Uri.parse('${widget.base}/audio-clips/review-queue?$petQuery'))
+          .timeout(const Duration(seconds: 20)));
+      } catch (_) { queueUnavailable = true; }
       if (mounted && token == epoch) {
         setState(() {
           clips = data as List<dynamic>;
           reviewQueue = queue is Map ? queue['items'] as List<dynamic> : [];
+          if (queueUnavailable) queueOnly = false;
+          error = queueUnavailable ? '확인 추천을 불러오지 못했습니다. 전체 음원 목록은 표시 중입니다.' : '';
         });
       }
     } catch (e) { if (mounted && token == epoch) setState(() => error = '$e'); }
