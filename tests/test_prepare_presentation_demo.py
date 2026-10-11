@@ -1,4 +1,4 @@
-from scripts.prepare_presentation_demo import dog_review_note
+from scripts.prepare_presentation_demo import dog_review_note, model_finding
 
 
 def test_demo_review_describes_actual_model_outcome():
@@ -9,3 +9,8 @@ def test_demo_review_describes_actual_model_outcome():
     assert '기준값에 못 미쳤습니다' in dog_review_note(missed)
     assert '기준값 이상입니다' in dog_review_note(detected)
     assert '놓침 여부는 확인할 수 없습니다' in dog_review_note(unavailable)
+    assert model_finding(missed)['status'] == 'below_threshold'
+    assert model_finding(detected)['status'] == 'at_or_above_threshold'
+    assert model_finding(unavailable) == {
+        'status': 'unavailable', 'dog_score': None, 'threshold': None,
+    }

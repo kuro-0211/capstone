@@ -37,16 +37,26 @@ def upload(outing, filename):
     return result, hashlib.sha256(content).hexdigest()
 
 
-def dog_review_note(clip):
-    """Describe this run's model result without turning the dataset label into a verdict."""
+def model_finding(clip):
+    """Keep this run's score separate from the dataset label and operator opinion."""
     model = clip['analysis'].get('audio_lstm') or {}
     score, threshold = model.get('dog_score'), model.get('threshold')
     if score is None or threshold is None:
-        finding = '현재 모델 결과가 없어 놓침 여부는 확인할 수 없습니다.'
-    elif score < threshold:
-        finding = '이번 실행의 실험 LSTM 점수가 기준값에 못 미쳤습니다.'
+        status = 'unavailable'
     else:
+        status = 'below_threshold' if score < threshold else 'at_or_above_threshold'
+    return {'status': status, 'dog_score': score, 'threshold': threshold}
+
+
+def dog_review_note(clip):
+    """Describe this run's model result without turning the dataset label into a verdict."""
+    status = model_finding(clip)['status']
+    if status == 'below_threshold':
+        finding = '이번 실행의 실험 LSTM 점수가 기준값에 못 미쳤습니다.'
+    elif status == 'at_or_above_threshold':
         finding = '이번 실행의 실험 LSTM 점수가 기준값 이상입니다.'
+    else:
+        finding = '현재 모델 결과가 없어 놓침 여부는 확인할 수 없습니다.'
     return f'ESC-50 Dog 라벨 공개 음원입니다. {finding} 실제 보호자 확인은 아닙니다.'
 
 
@@ -94,7 +104,7 @@ def main():
                                   json={'pet_id': PET, 'question': question})
     result = {'source': 'ESC-50 official test split; isolated local presentation database',
               'pet_id': PET, 'outing_ids': [outings[-1]['id'], session['id']],
-              'input_sha256': {'dog_detected': hashlib.sha256((ROOT/'5-203128-A-0.wav').read_bytes()).hexdigest(),
+              'input_sha256': {'dog_example_1': hashlib.sha256((ROOT/'5-203128-A-0.wav').read_bytes()).hexdigest(),
                                'dog_example_2': dog_second_hash, 'rain': rain_hash},
               'review_sources': [first['review']['source'], dog_second['review']['source'], rain['review']['source']],
               'summary': {'sample_seconds': summary['sample_seconds'],
@@ -102,6 +112,8 @@ def main():
                           'unknown_seconds': summary['unknown_seconds']},
               'model_windows': {k: v['analysis'].get('audio_lstm', {}).get('windows', [])
                                 for k, v in [('dog_example_2', dog_second), ('rain', rain)]},
+              'model_results': {k: model_finding(v) for k, v in
+                                [('dog_example_1', first), ('dog_example_2', dog_second), ('rain', rain)]},
               'questions': {k: {'question': q['question'], 'provider': q['provider'],
                                 'retrieval_mode': q['retrieval_mode'], 'answer': q['answer'],
                                 'claims': q['claims']} for k, q in explanations.items()},
