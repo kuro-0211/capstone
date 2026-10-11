@@ -122,9 +122,18 @@ class _DashboardPageState extends State<DashboardPage> {
       final values = await Future.wait([
         _get('/care/latest?pet_id=$petQuery'),
         _get('/observations?pet_id=$petQuery&limit=1'),
-        _get('/care/actions/recent?pet_id=$petQuery&limit=8'),
-        _get('/timeline?pet_id=$petQuery'),
-        _get('/metrics?pet_id=$petQuery'),
+        _get('/care/actions/recent?pet_id=$petQuery&limit=8').catchError((Object _) {
+          optionalFailures.add('최근 실행');
+          return actions;
+        }),
+        _get('/timeline?pet_id=$petQuery').catchError((Object _) {
+          optionalFailures.add('처리 타임라인');
+          return timeline;
+        }),
+        _get('/metrics?pet_id=$petQuery').catchError((Object _) {
+          optionalFailures.add('집계 지표');
+          return metrics;
+        }),
         if (silent) Future<dynamic>.value(catalog) else
           _get('/media/catalog').catchError((Object _) {
             optionalFailures.add('공개 자료 목록');

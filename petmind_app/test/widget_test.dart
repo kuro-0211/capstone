@@ -107,6 +107,41 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('timeline and metrics failures keep observations available', (tester) async {
+    var extrasOnline = false;
+    final client = MockClient((request) async {
+      final path = request.url.path;
+      if (!extrasOnline && (path == '/timeline' || path == '/metrics')) {
+        return http.Response('{"detail":"temporary"}', 503);
+      }
+      final dynamic result = path == '/care/latest' || path.endsWith('/profile')
+        ? null : path == '/observations'
+        ? [{'id': 8, 'source': 'user_audio', 'observed_at': '2026-10-11T00:00:00Z'}]
+        : path == '/metrics' || path == '/media/catalog'
+        ? {} : path == '/outings/day'
+        ? {'moments': [], 'sample_seconds': 0, 'unknown_seconds': 0}
+        : path == '/audio-clips/review-queue' ? {'items': []} : [];
+      return http.Response(jsonEncode(result), 200);
+    });
+    await tester.pumpWidget(MaterialApp(home: DashboardPage(client: client)));
+    await tester.pumpAndSettle();
+    expect(find.text('연결됨'), findsOneWidget);
+    expect(find.textContaining('핵심 관찰 기록은 표시 중입니다'), findsOneWidget);
+    final state = tester.state(find.byType(DashboardPage)) as dynamic;
+    expect(state.connectionIssue as String, contains('처리 타임라인'));
+    expect(state.connectionIssue as String, contains('집계 지표'));
+    await tester.drag(find.byType(ListView).first, const Offset(0, -1000));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('관찰 #8 · user_audio'), findsOneWidget);
+    extrasOnline = true;
+    await tester.drag(find.byType(ListView).first, const Offset(0, 1000));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('다시 연결'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('핵심 관찰 기록은 표시 중입니다'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('older refresh cannot replace a newer observation', (tester) async {
     final firstObservation = Completer<http.Response>();
     var observationRequests = 0;
