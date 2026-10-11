@@ -7,6 +7,17 @@ import 'package:http/testing.dart';
 import 'package:petmind_app/outings_panel.dart';
 
 void main() {
+  testWidgets('HTML server error shows a readable outings retry message', (tester) async {
+    final client = MockClient((_) async => http.Response('<html>proxy error</html>', 502));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: OutingsPanel(
+      client: client, base: 'http://localhost', petId: 'demo-dog',
+      onActiveChanged: (_) {}))));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('HTTP 502'), findsOneWidget);
+    expect(find.textContaining('proxy error'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('day summary failure keeps outing report visible and recovers', (tester) async {
     tester.view.physicalSize = const Size(1200, 1800);
     tester.view.devicePixelRatio = 1;

@@ -7,6 +7,18 @@ import 'package:http/testing.dart';
 import 'package:petmind_app/audio_panel.dart';
 
 void main() {
+  testWidgets('HTML server error shows a readable audio retry message', (tester) async {
+    final client = MockClient((_) async => http.Response('<html>proxy error</html>', 503));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: AudioPanel(
+      client: client, base: 'http://localhost', petId: 'dog-a', onChanged: () {}))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('사용자 음원 · 보호자 확인'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('HTTP 503').last, findsOneWidget);
+    expect(find.textContaining('proxy error'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('review queue failure still shows clips and recovers', (tester) async {
     tester.view.physicalSize = const Size(1200, 1500);
     tester.view.devicePixelRatio = 1;

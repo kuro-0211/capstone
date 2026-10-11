@@ -60,8 +60,18 @@ class _AudioPanelState extends State<AudioPanel> {
     }
   }
   dynamic decode(http.Response response) {
-    final data = jsonDecode(utf8.decode(response.bodyBytes));
-    if (response.statusCode >= 400) throw Exception(data['detail']);
+    dynamic data;
+    try { data = jsonDecode(utf8.decode(response.bodyBytes)); }
+    catch (_) {
+      if (response.statusCode >= 400) {
+        throw Exception('서버 응답 오류 (HTTP ${response.statusCode}). 다시 시도해 주세요.');
+      }
+      throw const FormatException('서버 응답 형식이 올바르지 않습니다.');
+    }
+    if (response.statusCode >= 400) {
+      throw Exception(data is Map && data['detail'] != null
+        ? data['detail'] : '서버 응답 오류 (HTTP ${response.statusCode}). 다시 시도해 주세요.');
+    }
     return data;
   }
   Future<void> load() async {

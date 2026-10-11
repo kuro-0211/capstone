@@ -75,8 +75,18 @@ class _OutingsPanelState extends State<OutingsPanel> {
     final uri = Uri.parse('${widget.base}$path');
     final response = await (body == null ? widget.client.get(uri) : widget.client.post(uri,
       headers: {'Content-Type': 'application/json'}, body: jsonEncode(body))).timeout(const Duration(seconds: 50));
-    final value = jsonDecode(utf8.decode(response.bodyBytes));
-    if (response.statusCode >= 400) throw Exception(value['detail'] ?? 'HTTP ${response.statusCode}');
+    dynamic value;
+    try { value = jsonDecode(utf8.decode(response.bodyBytes)); }
+    catch (_) {
+      if (response.statusCode >= 400) {
+        throw Exception('서버 응답 오류 (HTTP ${response.statusCode}). 다시 시도해 주세요.');
+      }
+      throw const FormatException('서버 응답 형식이 올바르지 않습니다.');
+    }
+    if (response.statusCode >= 400) {
+      throw Exception(value is Map && value['detail'] != null
+        ? value['detail'] : '서버 응답 오류 (HTTP ${response.statusCode}). 다시 시도해 주세요.');
+    }
     return value;
   }
 
