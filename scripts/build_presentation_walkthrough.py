@@ -11,8 +11,11 @@ import json
 import subprocess
 from pathlib import Path
 
+import numpy as np
+import soundfile as sf
 from PIL import Image, ImageDraw, ImageFont
 from imageio_ffmpeg import get_ffmpeg_exe
+from scipy.signal import resample_poly
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,21 +86,64 @@ def main():
         ("08", 25, "09  한계와 다음 단계", "기록은 쌓았지만 실제 가정 성능은 미검증", "FSD Dog 60건 중 43건 놓침\nESC Dog 평가 표본은 8건\n\n같은 반려견·홈캠 음원으로\n사람이 시간별 정답을 붙인\n독립 평가가 다음 과제입니다.", None,
          "감정·질환 진단이나\n발성 3종 분류를 주장하지 않음"),
     ]
+    narration = [
+        "펫마인드는 소리만으로 반려견의 감정이나 질환을 단정하지 않습니다. 관찰 후보를 기록하고, 사람의 의견과 원본 근거를 함께 보여줍니다.",
+        "공개 자료는 원본 단위로 분리했습니다. 검증 자료에서만 후보를 선택했고, 평가 자료는 선택 뒤에 비교했습니다. 새로 확보한 에프에스디 검증 음원은 백십 건입니다.",
+        "음원은 출처와 함께 시연용으로 표시합니다. 공개 자료의 의견은 실제 보호자의 확인이 아니고, 공통 모델 학습 동의에도 포함하지 않습니다.",
+        "첫 사례는 개 소리 후보로 감지됐습니다. 화면의 오 초 창은 분석 단위이지, 정확한 짖음 시작과 끝이 아닙니다. 이제 원본 소리를 들려드립니다.",
+        "두 번째 개 소리는 기존 모델이 놓쳤습니다. 비 소리는 기타 후보였습니다. 에너지 감지의 짖음 후보와 엘에스티엠 결과가 다를 수 있으므로 각각 구분해 보여줍니다.",
+        "귀가 요약은 저장된 분석 표본을 코드로 집계합니다. 두 번째 외출의 표본은 십 초이고, 영상 판단 불가도 십 초입니다. 외출 전체 활동량이라는 뜻은 아닙니다.",
+        "기록 검색은 관찰 번호와 원본 링크를 근거로 답합니다. 시연 담당자의 의견을 보호자 확인으로 바꿔 말하지 않으며, 근거가 없는 티브이 질문에는 부족하다고 답합니다.",
+        "증강 후보의 검증 평균 에프 원은 좋아졌지만, 기존 에프에스디 평가 성능은 낮아졌습니다. 따라서 운영 체크포인트는 기존 모델을 유지했습니다.",
+        "공개 음원 결과를 실제 가정 성능이라고 주장하지 않습니다. 다음에는 같은 반려견의 생활 음향을 모으고, 사람이 시간별 정답을 붙인 독립 평가가 필요합니다.",
+    ]
     concat = []
+    starts = []
+    elapsed = 0
     for name, duration, title, section, note, screenshot, emphasis in slides:
         path = slide(name, section, title, note, screenshot, emphasis=emphasis)
         concat.extend([f"file '{path.as_posix()}'", f"duration {duration}"])
+        starts.append(elapsed)
+        elapsed += duration
     concat.append(f"file '{(OUT / 'slide_08.png').as_posix()}'")
     list_file = OUT / "slides.txt"
     list_file.write_text("\n".join(concat) + "\n", encoding="utf-8")
     dog = ROOT / "artifacts/datasets/esc50/audio/5-203128-A-0.wav"
     if not dog.is_file():
         raise FileNotFoundError(dog)
+    sample_rate = 48000
+    sound = np.zeros((elapsed * sample_rate, 2), dtype=np.float32)
+    for i, (start, script) in enumerate(zip(starts, narration)):
+        text_path = OUT / f"narration_{i:02d}.txt"
+        wave_path = OUT / f"narration_{i:02d}.wav"
+        text_path.write_text(script, encoding="utf-8")
+        subprocess.run(["powershell", "-NoProfile", "-File", str(ROOT / "scripts/synthesize_walkthrough.ps1"),
+                        "-TextPath", str(text_path), "-WavePath", str(wave_path)], check=True, capture_output=True)
+        voice, rate = sf.read(wave_path, dtype="float32")
+        if voice.ndim == 2:
+            voice = voice.mean(axis=1)
+        if rate != sample_rate:
+            from math import gcd
+            factor = gcd(rate, sample_rate)
+            voice = resample_poly(voice, sample_rate // factor, rate // factor)
+        offset = (start + 2) * sample_rate
+        if offset + len(voice) > (start + slides[i][1] - 1) * sample_rate:
+            raise ValueError(f"narration {i} exceeds its slide duration")
+        sound[offset:offset + len(voice)] += voice[:, None] * 0.8
+    dog_audio, dog_rate = sf.read(dog, dtype="float32", always_2d=True)
+    dog_audio = dog_audio.mean(axis=1)
+    if dog_rate != sample_rate:
+        from math import gcd
+        factor = gcd(dog_rate, sample_rate)
+        dog_audio = resample_poly(dog_audio, sample_rate // factor, dog_rate // factor)
+    dog_offset = (starts[3] + 18) * sample_rate
+    sound[dog_offset:dog_offset + len(dog_audio)] += dog_audio[:, None] * 0.65
+    wave = OUT / "walkthrough_sound.wav"
+    sf.write(wave, np.clip(sound, -1, 1), sample_rate, subtype="PCM_16")
     output = OUT / "petmind_public_data_walkthrough.mp4"
     ffmpeg = get_ffmpeg_exe()
-    command = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(list_file), "-i", str(dog),
-               "-filter_complex", "[1:a]adelay=62000:all=1,volume=0.5[dog];anullsrc=channel_layout=stereo:sample_rate=48000:duration=220[sil];[sil][dog]amix=inputs=2:duration=first[a]",
-               "-map", "0:v", "-map", "[a]", "-r", "12", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+    command = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(list_file), "-i", str(wave),
+               "-map", "0:v", "-map", "1:a", "-r", "12", "-c:v", "libx264", "-pix_fmt", "yuv420p",
                "-c:a", "aac", "-b:a", "128k", "-shortest", str(output)]
     subprocess.run(command, check=True, capture_output=True)
     print(output)
