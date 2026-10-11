@@ -154,12 +154,12 @@ class _DashboardPageState extends State<DashboardPage> {
           : '${_optionalFailures.join('·')}을 불러오지 못했습니다. 핵심 관찰 기록은 표시 중입니다.';
         if (!silent) notice = connectionIssue ?? '최신 상태를 불러왔습니다.';
       });
-    } catch (error) {
+    } catch (_) {
       if (!mounted || sequence != _refreshSequence || requestedPet != petId) return;
       setState(() {
         connected = false;
         connectionIssue = '서버에 연결할 수 없습니다. 백엔드 실행을 확인한 뒤 다시 연결해 주세요.';
-        if (!silent) notice = '서버 연결 실패: $error';
+        notice = '';
       });
     } finally {
       if (sequence == _refreshSequence) _refreshing = false;

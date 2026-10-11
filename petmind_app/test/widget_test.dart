@@ -25,6 +25,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('연결 끊김'), findsOneWidget);
     expect(find.textContaining('백엔드 실행을 확인한 뒤 다시 연결'), findsOneWidget);
+    expect(find.textContaining('503'), findsNothing);
     online = true;
     await tester.tap(find.text('다시 연결'));
     await tester.pumpAndSettle();

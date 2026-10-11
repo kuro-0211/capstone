@@ -16,7 +16,8 @@ INTENTS = {
 def question_intents(question):
     question = ' '.join(unicodedata.normalize('NFKC', question).lower().split())
     requested = [kind for kind, terms in INTENTS.items() if any(t in question for t in terms)]
-    if re.search(r'(분석|녹음|저장|표본).{0,15}(분량|몇\s*초|얼마|길이|총\s*시간)', question):
+    if (re.search(r'(분석|녹음|저장|표본).{0,15}(분량|몇\s*(초|분)|얼마|길이|총\s*시간)', question)
+            or re.search(r'얼마나\s*오래\s*(봤|보았|관찰|분석|녹음|기록)', question)):
         requested.append('summary')
     return list(dict.fromkeys(requested))
 

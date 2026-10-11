@@ -60,6 +60,18 @@ def test_source_time_and_empty_evidence(client):
     assert client.post('/observations', json=old).status_code == 422
 
 
+@pytest.mark.parametrize('question', [
+    '녹음이 총 몇 분이나 쌓였나요?',
+    '얼마나 오래 봤는지 알려줘',
+])
+def test_natural_duration_questions_retrieve_measured_sample_time(client, question):
+    oid = start(client)
+    observe(client, oid)
+    result = client.post(f'/outings/{oid}/explain', json={
+        'pet_id': 'dog-a', 'question': question}).json()
+    assert any(c['kind'] == 'summary' and '초' in c['text'] for c in result['claims'])
+
+
 def test_duplicate_video_unknown_and_media_integrity(client, tmp_path, monkeypatch):
     monkeypatch.setattr(routes, 'MEDIA_ROOT', tmp_path)
     oid = start(client)
