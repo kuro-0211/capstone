@@ -155,7 +155,7 @@ def main():
     dog = ROOT/'artifacts/datasets/esc50_demo/audio/5-203128-A-0.wav'
     if not dog.is_file():
         raise FileNotFoundError('Run python -m scripts.prepare_demo_audio before building the video')
-    if hashlib.sha256(dog.read_bytes()).hexdigest() != SAMPLES[dog.name][1]:
+    if hashlib.sha256(dog.read_bytes()).hexdigest() != SAMPLES[dog.name][2]:
         raise ValueError('public audio hash changed')
     audio, rate = sf.read(dog, dtype='float32', always_2d=True)
     audio = audio.mean(axis=1)
