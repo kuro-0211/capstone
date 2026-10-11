@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'clip_view.dart';
 import 'audio_panel.dart';
+import 'genesis_theme.dart';
 
 class OutingsPanel extends StatefulWidget {
   const OutingsPanel({super.key, required this.client, required this.base,
@@ -28,6 +29,15 @@ class _OutingsPanelState extends State<OutingsPanel> {
   final question = TextEditingController(text: '이번 외출을 요약해 주세요.');
   String get petQuery => 'pet_id=${Uri.encodeQueryComponent(widget.petId)}';
   String get dayText => '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
+  String outingLabel(Map<String, dynamic> outing) {
+    final started = DateTime.tryParse(outing['started_at']?.toString() ?? '');
+    final korea = started?.toUtc().add(const Duration(hours: 9));
+    final when = korea == null ? (outing['started_at']?.toString() ?? '시각 없음')
+      : '${korea.month}월 ${korea.day}일 ${korea.hour.toString().padLeft(2, '0')}:${korea.minute.toString().padLeft(2, '0')}';
+    const modes = {'uploaded_audio': '사용자 음원', 'prepared_video': '준비된 영상·음원',
+      'synthetic_demo': '합성 시연'};
+    return '$when · ${outing['status'] == 'active' ? '진행 중' : '종료'} · ${modes[outing['input_mode']] ?? outing['input_mode']}';
+  }
 
   @override
   void initState() { super.initState(); load(); }
@@ -99,12 +109,37 @@ class _OutingsPanelState extends State<OutingsPanel> {
     ));
   }
 
+  Widget _metric(String label, String value) => Container(
+    width: 170,
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: GenesisTheme.background,
+      border: Border.all(color: GenesisTheme.border),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: Theme.of(context).textTheme.bodySmall),
+      const SizedBox(height: 4),
+      Text(value, style: Theme.of(context).textTheme.titleMedium),
+    ]),
+  );
+
   Widget metrics(Map<String, dynamic> data) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Text('분석 표본 ${data['sample_seconds'] ?? 0}초 · 판단 불가 ${data['unknown_seconds'] ?? 0}초 · 짖음 후보 ${data['bark_candidate_count'] ?? 0}회'),
-    Text('정지 ${data['seconds_by_label']?['still'] ?? 0}초 · 이동 ${data['seconds_by_label']?['moving'] ?? 0}초 · 회전 ${data['seconds_by_label']?['spinning'] ?? 0}초 · 왕복 ${data['seconds_by_label']?['pacing'] ?? 0}초'),
-    if (data['unobserved_seconds'] != null) Text('미관찰 ${data['unobserved_seconds']}초'),
-    Text('중복·겹침 제외 ${(data['skipped_overlap_ids'] as List? ?? []).length}건 · 날짜 경계 제외 ${(data['excluded_day_boundary_ids'] as List? ?? []).length}건'),
-    const Text('저장된 분석 구간의 합계입니다. 실제 외출 전체 시간의 활동량이 아닙니다.'),
+    Wrap(spacing: 8, runSpacing: 8, children: [
+      _metric('분석 표본', '${data['sample_seconds'] ?? 0}초'),
+      _metric('판단 불가', '${data['unknown_seconds'] ?? 0}초'),
+      _metric('짖음 후보', '${data['bark_candidate_count'] ?? 0}회'),
+    ]),
+    const SizedBox(height: 12),
+    Text('정지 ${data['seconds_by_label']?['still'] ?? 0}초 · 이동 ${data['seconds_by_label']?['moving'] ?? 0}초 · 회전 ${data['seconds_by_label']?['spinning'] ?? 0}초 · 왕복 ${data['seconds_by_label']?['pacing'] ?? 0}초',
+      style: Theme.of(context).textTheme.bodySmall),
+    if (data['unobserved_seconds'] != null) Text('미관찰 ${data['unobserved_seconds']}초',
+      style: Theme.of(context).textTheme.bodySmall),
+    Text('중복·겹침 제외 ${(data['skipped_overlap_ids'] as List? ?? []).length}건 · 날짜 경계 제외 ${(data['excluded_day_boundary_ids'] as List? ?? []).length}건',
+      style: Theme.of(context).textTheme.bodySmall),
+    const SizedBox(height: 4),
+    Text('저장된 분석 구간의 합계입니다. 실제 외출 전체 시간의 활동량이 아닙니다.',
+      style: Theme.of(context).textTheme.bodySmall),
   ]);
 
   @override
@@ -112,10 +147,16 @@ class _OutingsPanelState extends State<OutingsPanel> {
     final moments = (report?['moments'] as List? ?? []);
     final previous = explanation?['report']?['comparison']?['previous_summary']?['moments'] as List? ?? [];
     final allMoments = [...moments, ...previous];
-    return Card(child: Padding(padding: const EdgeInsets.all(20), child: Column(
+    return Card(child: Padding(padding: const EdgeInsets.all(24), child: Column(
       crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('OUTING JOURNAL', style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: GenesisTheme.secondaryInk, letterSpacing: 1.4, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
         Text('외출 모드 · 귀가 리포트', style: Theme.of(context).textTheme.titleLarge),
-        const Text('시작 버튼은 기록 묶음을 만듭니다. 카메라 자동 촬영을 시작하지 않습니다.'),
+        const SizedBox(height: 8),
+        Text('시작 버튼은 기록 묶음을 만듭니다. 카메라 자동 촬영을 시작하지 않습니다.',
+          style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 20),
         if (active == null) Wrap(spacing: 12, crossAxisAlignment: WrapCrossAlignment.center, children: [
           DropdownButton<String>(value: mode, items: const [
             DropdownMenuItem(value: 'synthetic_demo', child: Text('합성 시연')),
@@ -135,15 +176,17 @@ class _OutingsPanelState extends State<OutingsPanel> {
         ],
         if (outings.isNotEmpty) DropdownButton<String>(value: selected, isExpanded: true,
           items: outings.map((o) => DropdownMenuItem<String>(value: o['id'],
-            child: Text('${o['started_at']} · ${o['status'] == 'active' ? '진행 중' : '종료'} · ${o['input_mode']}'))).toList(),
+            child: Text(outingLabel(Map<String, dynamic>.from(o)), overflow: TextOverflow.ellipsis))).toList(),
           onChanged: busy ? null : (value) { selected = value; load(); }),
         TextButton(onPressed: busy ? null : load, child: const Text('외출 기록 새로고침')),
+        const Divider(height: 32),
         AudioPanel(key: ValueKey(widget.petId), client: widget.client, base: widget.base,
           petId: widget.petId, outing: active, onChanged: () { load(); }),
         if (report == null) const Text('외출을 시작하고 아래에서 관찰 입력을 추가해 주세요.'),
         if (report != null) ...[
+          const SizedBox(height: 20),
           metrics(report!),
-          const SizedBox(height: 12),
+          const SizedBox(height: 24),
           TextField(controller: question, decoration: const InputDecoration(labelText: '외출 기록에 질문하기'), maxLength: 1000),
           Wrap(spacing: 8, children: [
             FilledButton(onPressed: busy ? null : () => explain(), child: const Text('근거 기반 요약')),
@@ -166,7 +209,7 @@ class _OutingsPanelState extends State<OutingsPanel> {
             if (explanation!['report']['comparison']['status'] != 'sample_rate_comparison')
               const Text('이전 외출 비교: 같은 입력 방식의 충분한 기록이 필요합니다.'),
           ],
-          const SizedBox(height: 12),
+          const SizedBox(height: 24),
           Text('중요한 순간 · 관찰 근거', style: Theme.of(context).textTheme.titleMedium),
           if (moments.isEmpty) const Text('저장된 관찰이 없습니다.'),
           for (final item in moments) ListTile(contentPadding: EdgeInsets.zero,
@@ -174,7 +217,7 @@ class _OutingsPanelState extends State<OutingsPanel> {
             trailing: TextButton(onPressed: item['media_available'] == true || item['audio_available'] == true ? () => openMoment(Map<String, dynamic>.from(item)) : null,
               child: Text(item['media_available'] == true ? '구간 보기' : item['audio_available'] == true ? '음원 듣기' : '원본 없음'))),
         ],
-        const Divider(),
+        const Divider(height: 40),
         Text('하루 관찰 요약 · $dayText (한국 시간)', style: Theme.of(context).textTheme.titleMedium),
         TextButton(onPressed: busy ? null : () async {
           final picked = await showDatePicker(context: context, initialDate: day,

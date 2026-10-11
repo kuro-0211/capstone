@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'audio_input.dart';
 import 'clip_view.dart';
+import 'genesis_theme.dart';
 
 class AudioPanel extends StatefulWidget {
   const AudioPanel({super.key, required this.client, required this.base, required this.petId,
@@ -114,8 +115,12 @@ class _AudioPanelState extends State<AudioPanel> {
       actions:[TextButton(onPressed:() => Navigator.pop(context),child:const Text('닫기'))]));
   }
   @override
-  Widget build(BuildContext context) => ExpansionTile(title:const Text('사용자 음원 · 보호자 확인'),
-    subtitle:const Text('30초 이하 WAV · 모델 학습 참여는 별도 선택'),children:[
+  Widget build(BuildContext context) => ExpansionTile(
+    tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+    childrenPadding: const EdgeInsets.only(bottom: 8),
+    title: Text('사용자 음원 · 보호자 확인', style: Theme.of(context).textTheme.titleMedium),
+    subtitle: Text('30초 이하 WAV · 모델 학습 참여는 별도 선택',
+      style: Theme.of(context).textTheme.bodySmall),children:[
     Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
       audioInput((name,data) { if (mounted) setState(() { filename = name; bytes = data; }); },
         (message) { if (mounted) setState(() => error = message); }),
@@ -142,14 +147,26 @@ class _AudioPanelState extends State<AudioPanel> {
       for (final raw in queueOnly ? reviewQueue : clips) Builder(builder:(context) {
         final item = Map<String,dynamic>.from(raw);
         final model = item['analysis']?['audio_lstm'];
-        return Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-          Text('관찰 #${item['observation_id']} · ${item['duration_s']}초'),
-          Text(item['source_note'] ?? '출처 정보 없음'),
-          Text(item['review_priority'] == 'model_disagreement' ? '확인 권장: 모델과 에너지 감지 결과가 다릅니다.' :
-            item['review_priority'] == 'uncertain' ? '확인 권장: 판별 근거가 부족합니다.' : '일반 구간 확인 표본'),
-          if (model != null) Text('실험 LSTM 개 소리 점수 ${model['dog_score']} · 기준 ${model['threshold']} (정확도·확률 아님)'),
+        return Padding(padding: const EdgeInsets.only(bottom: 12), child: Card(child:Padding(
+          padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Text('관찰 #${item['observation_id']} · ${item['duration_s']}초',
+            style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Text(item['source_note'] ?? '출처 정보 없음', style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 8),
+          Chip(
+            backgroundColor: item['review_priority'] == 'routine_sample'
+              ? const Color(0xFFF4F4F5) : const Color(0xFFFFF7E6),
+            label: Text(item['review_priority'] == 'model_disagreement' ? '확인 권장: 모델과 에너지 감지 결과가 다릅니다.' :
+              item['review_priority'] == 'uncertain' ? '확인 권장: 판별 근거가 부족합니다.' : '일반 구간 확인 표본',
+              style: TextStyle(color: item['review_priority'] == 'routine_sample'
+                ? GenesisTheme.secondaryInk : const Color(0xFF8A5A00)))),
+          if (model != null) Text('실험 LSTM 개 소리 점수 ${model['dog_score']} · 기준 ${model['threshold']} (정확도·확률 아님)',
+            style: Theme.of(context).textTheme.bodySmall),
           if (model?['windows'] is List && (model['windows'] as List).isNotEmpty) ...[
-            const Text('음원 분석 구간 · 5초 창은 정확한 발성 시작·종료 시각이 아닙니다.'),
+            const SizedBox(height: 12),
+            Text('음원 분석 구간 · 5초 창은 정확한 발성 시작·종료 시각이 아닙니다.',
+              style: Theme.of(context).textTheme.bodySmall),
             for (final rawWindow in model['windows']) Builder(builder: (context) {
               final window = Map<String,dynamic>.from(rawWindow);
               final start = (window['start_s'] as num).toDouble();
@@ -181,7 +198,7 @@ class _AudioPanelState extends State<AudioPanel> {
               if (yes == true && mounted && pet == widget.petId) await run(() => post('/audio-clips/${item['id']}/delete-original?$petQuery',{}));
             },child:const Text('원본 삭제')),
           ]),
-        ])));
+        ]))));
       }),
       if (busy) const LinearProgressIndicator(),
       if (error.isNotEmpty) Text(error,style:const TextStyle(color:Colors.orange)),

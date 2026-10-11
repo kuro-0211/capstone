@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'genesis_theme.dart';
 import 'outings_panel.dart';
 
 const String apiBase = String.fromEnvironment(
@@ -20,15 +21,7 @@ class PetMindApp extends StatelessWidget {
     return MaterialApp(
       title: 'PetMind Care',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xff6750a4),
-          brightness: Brightness.dark,
-        ),
-        scaffoldBackgroundColor: const Color(0xff101018),
-        cardTheme: const CardThemeData(color: Color(0xff1c1b24), margin: EdgeInsets.zero),
-        useMaterial3: true,
-      ),
+      theme: GenesisTheme.light,
       home: const DashboardPage(),
     );
   }
@@ -279,12 +272,25 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('PetMind Care'),
+        title: LayoutBuilder(builder: (context, constraints) => Row(
+          mainAxisSize: MainAxisSize.min, children: [
+            const Text('PetMind', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700,
+              letterSpacing: -0.4)),
+            if (constraints.maxWidth >= 340) ...[
+              const SizedBox(width: 12),
+              Flexible(child: Text('CARE / EVIDENCE', maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: GenesisTheme.secondaryInk, letterSpacing: 1.1))),
+            ],
+          ],
+        )),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: Chip(
-              avatar: Icon(Icons.circle, size: 12, color: connected ? Colors.green : Colors.red),
+              avatar: Icon(Icons.circle, size: 12,
+                color: connected ? GenesisTheme.success : GenesisTheme.error),
               label: Text(connected ? '연결됨' : '연결 끊김'),
             ),
           ),
@@ -292,27 +298,35 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
       body: RefreshIndicator(
         onRefresh: refresh,
-        child: ListView(
-          padding: const EdgeInsets.all(20),
+        child: Center(child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1280),
+          child: ListView(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
           children: [
+            _pageIntro(),
+            const SizedBox(height: 32),
             OutingsPanel(client: client, base: apiBase, petId: petId,
               observationId: observation?['id'] as int?,
               onActiveChanged: (value) { activeOuting = value; }),
+            const SizedBox(height: 32),
+            _sectionTitle('관찰 입력과 분석', '시연 자료와 사용자 자료의 출처를 구분해 기록합니다.'),
             const SizedBox(height: 16),
             _inputCard(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             _mediaCard(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             _overview(),
+            const SizedBox(height: 32),
+            _sectionTitle('케어 제안과 근거', '보호자가 기록과 원본을 확인한 뒤 제안을 검토합니다.'),
             const SizedBox(height: 16),
             _suggestionCard(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             _evidenceCard(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             _actionHistory(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             _timelineCard(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             _comparisonCard(),
             if (notice.isNotEmpty) ...[
               const SizedBox(height: 12),
@@ -330,10 +344,32 @@ class _DashboardPageState extends State<DashboardPage> {
               label: const Text('현재 상태 평가하기'),
             ),
           ],
-        ),
+        ))),
       ),
     );
   }
+
+  Widget _pageIntro() => LayoutBuilder(builder: (context, constraints) {
+    final compact = constraints.maxWidth < 640;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('PETMIND / CARE JOURNAL', style: Theme.of(context).textTheme.labelSmall?.copyWith(
+        color: GenesisTheme.secondaryInk, letterSpacing: 1.6, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 12),
+      Text('반려견의 하루를, 근거로 확인하세요.',
+        style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontSize: compact ? 29 : 38)),
+      const SizedBox(height: 12),
+      Text('영상과 소리의 관찰 신호를 기록하고, 보호자 의견과 과거 근거를 함께 살펴봅니다.',
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: GenesisTheme.secondaryInk)),
+    ]);
+  });
+
+  Widget _sectionTitle(String title, String description) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(title, style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 4),
+      Text(description, style: Theme.of(context).textTheme.bodySmall),
+    ],
+  );
 
   Widget _inputCard() {
     return Card(child: Padding(padding: const EdgeInsets.all(20), child: Column(
@@ -360,17 +396,17 @@ class _DashboardPageState extends State<DashboardPage> {
             refresh();
           },
         ),
-        Row(children: [
-          Expanded(child: Text(profile == null ? '프로필 미등록' : '${profile!['name']} · ${profile!['age_years'] ?? '-'}세 · 보호자 입력')),
+        Wrap(spacing: 12, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          Text(profile == null ? '프로필 미등록' : '${profile!['name']} · ${profile!['age_years'] ?? '-'}세 · 보호자 입력'),
           TextButton(onPressed: busy ? null : editProfile, child: const Text('프로필·메모 편집')),
         ]),
         TextField(controller: question, decoration: const InputDecoration(labelText: '기록에 대해 질문하기'), maxLength: 1000),
         const SizedBox(height: 12),
         Wrap(spacing: 8, runSpacing: 8, children: [
           OutlinedButton(onPressed: busy ? null : seedHistory, child: const Text('합성 과거 기록 준비')),
-          FilledButton(onPressed: busy ? null : () => demo('calm'), child: const Text('휴식 시연')),
-          FilledButton(onPressed: busy ? null : () => demo('anxious'), child: const Text('회전·짖음 시연')),
-          FilledButton(onPressed: busy ? null : () => demo('bored_pacing'), child: const Text('왕복 이동 시연')),
+          OutlinedButton(onPressed: busy ? null : () => demo('calm'), child: const Text('휴식 시연')),
+          OutlinedButton(onPressed: busy ? null : () => demo('anxious'), child: const Text('회전·짖음 시연')),
+          OutlinedButton(onPressed: busy ? null : () => demo('bored_pacing'), child: const Text('왕복 이동 시연')),
         ]),
         if (observation != null) Padding(padding: const EdgeInsets.only(top: 12),
           child: Text('관찰 #${observation!['id']} · ${observation!['source']} · ${observation!['observed_at']}')),
@@ -537,7 +573,7 @@ class _DashboardPageState extends State<DashboardPage> {
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(children: [
-            Icon(icon, size: 34, color: Theme.of(context).colorScheme.primary),
+            Icon(icon, size: 30, color: GenesisTheme.secondaryInk),
             const SizedBox(width: 14),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(title, style: Theme.of(context).textTheme.labelLarge),
