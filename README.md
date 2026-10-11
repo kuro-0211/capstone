@@ -292,7 +292,7 @@ API 문서: `http://127.0.0.1:8010/docs`. Flutter의 기본 API 주소는 `http:
 | 가상 장치 | `GET /care/actions/pending`, `POST /care/actions/{command_id}/ack` | 명령 조회·수신·완료/실패 보고 |
 | 이력·추가 기록 | `GET /timeline`, `GET /metrics`, `/pets/{pet_id}/profile`, `/feedback` | 타임라인·수치·프로필·보호자 의견 |
 | 외출·요약 | `POST /outings`, `POST /outings/{id}/end`, `GET /outings/{id}/summary`, `POST /outings/{id}/explain` | 시작·종료·집계·근거 설명 |
-| 하루·영상 | `GET /outings/day`, `POST /outings/day/explain`, `GET /outings/observations/{id}/clip` | 한국 시간 하루 요약·원본 구간 재생 |
+| 하루·근거 | `GET /outings/day`, `POST /outings/day/explain`, `GET /outings/observations/{id}/evidence`, `GET /outings/observations/{id}/clip` | 한국 시간 하루 요약·과거 인용 기록의 원본 가용성·구간 재생 |
 | 사용자 음원 | `/audio-clips/upload`, `/audio-clips/review-queue`, `/audio-clips/{id}/review`, `/audio-clips/{id}/consent`, `/audio-clips/{id}/delete-original` | 동의·분석·의견·철회·삭제 |
 | MCP stdio | `search_observations`, `get_observation_stats`, `get_care_history`, `get_outing_facts` | 같은 반려견의 기록·집계·세션 근거 읽기 |
 
@@ -320,8 +320,8 @@ API 문서: `http://127.0.0.1:8010/docs`. Flutter의 기본 API 주소는 `http:
 
 | 항목 | 확인 결과 | 해석·근거 |
 |---|---|---|
-| 최신 로컬 Python | **112 passed** | 모델을 준비한 개발 환경; 이전 복제본 65 passed/1 skipped는 과거 결과 |
-| Flutter | 테스트 **11 passed**, `flutter analyze` 오류 없음, 웹 빌드 성공 | 실제 브라우저 음원·귀가 흐름 확인; 녹화 파일 미확보 |
+| 최신 로컬 Python | **115 passed** | 모델을 준비한 개발 환경; Git 파일만의 별도 검증은 113 passed/1 skipped ([조건](docs/38_자체피드백_안정성_출처_사용성.md)) |
+| Flutter | 테스트 **17 passed**, `flutter analyze` 오류 없음, 웹 빌드 성공 | 실제 브라우저 음원·귀가 흐름 확인; 편집 설명 영상은 연속 클릭 녹화가 아님 |
 | 음성 LSTM — ESC-50 | 재현율·정밀도·F1 **62.5%**, 개 소리 5/8 감지 | 양성 표본 8개, 실제 가정 정확도 아님 |
 | 음성 LSTM — FSD50K | 재현율 **28.3%**, 정밀도 **94.4%**, F1 **43.6%** | 개 소리 17/60 감지, 비개 소리 오탐 1/60; [평가](docs/evidence/audio_external_fsd50k.json) |
 | 추가 학습·CLAP | LSTM 추가 학습 개선 미확인; CLAP FSD F1 83.5% | CLAP 사전학습 중복 가능성, 모델 자동 교체 안 함 |

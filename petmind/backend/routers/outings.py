@@ -87,6 +87,14 @@ def require_media(db, observation_id, pet_id):
     return observation, media, path
 
 
+@router.get('/observations/{observation_id}/evidence')
+def observation_evidence(observation_id: int, pet_id: str, db=Depends(get_db)):
+    observation = db.get(ObservationLog, observation_id)
+    if observation is None or observation.pet_id != pet_id:
+        raise HTTPException(404, '관찰 기록을 찾을 수 없습니다.')
+    return outings.moment(db, observation)
+
+
 @router.get('/observations/{observation_id}/video')
 def video(observation_id: int, pet_id: str, db=Depends(get_db)):
     _, _, path = require_media(db, observation_id, pet_id)

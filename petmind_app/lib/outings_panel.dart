@@ -142,6 +142,26 @@ class _OutingsPanelState extends State<OutingsPanel> {
     ));
   }
 
+  Future<void> openEvidence(dynamic observationId) async {
+    final pet = widget.petId;
+    try {
+      final raw = await request('/outings/observations/$observationId/evidence?$petQuery');
+      if (!mounted || pet != widget.petId) return;
+      final item = Map<String, dynamic>.from(raw);
+      if (item['media_available'] == true || item['audio_available'] == true) {
+        openMoment(item);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('관찰 #$observationId: 재생 가능한 원본이 없습니다.')));
+      }
+    } catch (_) {
+      if (mounted && pet == widget.petId) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('관찰 #$observationId: 근거를 불러오지 못했습니다. 다시 시도해 주세요.')));
+      }
+    }
+  }
+
   Widget _metric(String label, String value) => Container(
     width: 170,
     padding: const EdgeInsets.all(12),
@@ -183,8 +203,6 @@ class _OutingsPanelState extends State<OutingsPanel> {
   @override
   Widget build(BuildContext context) {
     final moments = (report?['moments'] as List? ?? []);
-    final previous = explanation?['report']?['comparison']?['previous_summary']?['moments'] as List? ?? [];
-    final allMoments = [...moments, ...previous];
     return Card(child: Padding(padding: const EdgeInsets.all(24), child: Column(
       crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('OUTING JOURNAL', style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -238,12 +256,7 @@ class _OutingsPanelState extends State<OutingsPanel> {
               crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(claim['text']),
                 Wrap(children: [for (final id in claim['observation_ids']) TextButton(
-                  onPressed: () {
-                    final matched = allMoments.where((m) => m['observation_id'] == id);
-                    if (matched.isNotEmpty && (matched.first['media_available'] == true || matched.first['audio_available'] == true)) {
-                      openMoment(Map<String, dynamic>.from(matched.first));
-                    } else { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('관찰 #$id: 연결된 영상이 없습니다.'))); }
-                  }, child: Text('근거 #$id'))]),
+                  onPressed: () => openEvidence(id), child: Text('근거 #$id'))]),
               ])),
             if (comparisonRequested(explanation!['question']) &&
                 explanation!['report']['comparison']['status'] == 'incompatible_provenance')
@@ -283,15 +296,7 @@ class _OutingsPanelState extends State<OutingsPanel> {
             crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(claim['text']),
               Wrap(children: [for (final id in claim['observation_ids']) TextButton(
-                onPressed: () {
-                  final candidates = (dayExplanation!['report']['moments'] as List)
-                    .where((m) => m['observation_id'] == id);
-                  if (candidates.isNotEmpty && (candidates.first['audio_available'] == true || candidates.first['media_available'] == true)) {
-                    openMoment(Map<String, dynamic>.from(candidates.first));
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('관찰 #$id: 재생 가능한 원본이 없습니다.')));
-                  }
-                }, child: Text('하루 근거 #$id'))]),
+                onPressed: () => openEvidence(id), child: Text('하루 근거 #$id'))]),
             ]),
           Text(dayExplanation!['note']),
         ],

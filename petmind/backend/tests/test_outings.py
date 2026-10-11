@@ -49,6 +49,32 @@ def test_lifecycle_legacy_and_isolation(client):
     assert client.post('/demo/observe', json={'pet_id': 'legacy'}).json()['outing_id'] is None
 
 
+def test_old_cited_observation_evidence_can_be_opened_across_outings(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(routes, 'MEDIA_ROOT', tmp_path)
+    first = start(client)
+    past = observe(client, first)
+    assert client.post(f'/outings/{first}/end?pet_id=dog-a').status_code == 200
+    second = start(client)
+    observe(client, second)
+    assert past['id'] not in client.get(f'/outings/{second}/summary?pet_id=dog-a').json()['counted_observation_ids']
+    content = b'public-video-test'
+    (tmp_path/'past.mp4').write_bytes(content)
+    with client.sessions() as db:
+        db.add(ObservationMedia(observation_id=past['id'], filename='past.mp4',
+            sha256=hashlib.sha256(content).hexdigest(), start_s=0, end_s=10,
+            source_json=json.dumps({'attribution': 'test', 'license': 'test'})))
+        db.commit()
+
+    response = client.get(f'/outings/observations/{past["id"]}/evidence?pet_id=dog-a')
+    assert response.status_code == 200
+    evidence = response.json()
+    assert evidence['observation_id'] == past['id']
+    assert evidence['media_available'] is True
+    assert evidence['clip_url'] == f'/outings/observations/{past["id"]}/clip?pet_id='
+    assert client.get(f'/outings/observations/{past["id"]}/evidence?pet_id=other').status_code == 404
+    assert client.get('/outings/observations/999999/evidence?pet_id=dog-a').status_code == 404
+
+
 def test_source_time_and_empty_evidence(client):
     oid = start(client, mode='prepared_video')
     assert client.post('/demo/observe', json={'pet_id': 'dog-a', 'outing_id': oid}).status_code == 422
