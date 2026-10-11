@@ -1,18 +1,20 @@
 """Populate the isolated localhost presentation DB with clearly marked public audio.
 
 Requires the API to be started with a disposable PETMIND_DATABASE_URL under artifacts/.
-Only ESC-50 test clips and public-dataset provenance are sent to localhost.
+Only ESC-50 demo clips and public-dataset provenance are sent to localhost.
+Run after completing a first browser outing with 5-203128-A-0.wav.
 """
+import argparse
 import hashlib
 import json
 from pathlib import Path
 
 import requests
 
-ROOT = Path('artifacts/datasets/esc50/audio')
-BASE = 'http://127.0.0.1:8013'
+ROOT = Path('artifacts/datasets/esc50_demo/audio')
+BASE = 'http://127.0.0.1:8010'
 PET = 'demo-dog'
-EVIDENCE = Path('docs/evidence/presentation_demo_api.json')
+EVIDENCE = Path('artifacts/presentation_20261011/demo_api.json')
 
 
 def call(method, path, **kwargs):
@@ -35,7 +37,31 @@ def upload(outing, filename):
     return result, hashlib.sha256(content).hexdigest()
 
 
+def dog_review_note(clip):
+    """Describe this run's model result without turning the dataset label into a verdict."""
+    model = clip['analysis'].get('audio_lstm') or {}
+    score, threshold = model.get('dog_score'), model.get('threshold')
+    if score is None or threshold is None:
+        finding = '현재 모델 결과가 없어 놓침 여부는 확인할 수 없습니다.'
+    elif score < threshold:
+        finding = '이번 실행의 실험 LSTM 점수가 기준값에 못 미쳤습니다.'
+    else:
+        finding = '이번 실행의 실험 LSTM 점수가 기준값 이상입니다.'
+    return f'ESC-50 Dog 라벨 공개 음원입니다. {finding} 실제 보호자 확인은 아닙니다.'
+
+
 def main():
+    global ROOT, BASE, PET, EVIDENCE
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--audio-dir', type=Path, default=ROOT)
+    parser.add_argument('--base', default=BASE)
+    parser.add_argument('--pet-id', default=PET)
+    parser.add_argument('--output', type=Path, default=EVIDENCE)
+    args = parser.parse_args()
+    ROOT, BASE, PET, EVIDENCE = args.audio_dir, args.base.rstrip('/'), args.pet_id, args.output
+    if not all((ROOT/name).is_file() for name in
+               ('5-203128-A-0.wav', '5-208030-A-0.wav', '5-181766-A-10.wav')):
+        raise FileNotFoundError('Run python -m scripts.prepare_demo_audio first')
     outings = call('GET', '/outings', params={'pet_id': PET})
     if len(outings) not in (1, 2) or any(o['status'] != 'ended' for o in outings):
         raise RuntimeError('Expected one or two completed outings in the isolated DB')
@@ -48,17 +74,16 @@ def main():
     if len(outings) == 1:
         session = call('POST', '/outings', json={'pet_id': PET, 'input_mode': 'uploaded_audio',
                                                 'title': '공개 음원 검증 시연 2'})
-        missed, missed_hash = upload(session['id'], '5-208030-A-0.wav')
-        missed = review(missed, 'uncertain',
-                        'ESC-50 Dog 라벨인데 기존 LSTM은 놓쳤습니다. 공개 자료 검증 사례입니다.')
+        dog_second, dog_second_hash = upload(session['id'], '5-208030-A-0.wav')
+        dog_second = review(dog_second, 'uncertain', dog_review_note(dog_second))
         rain, rain_hash = upload(session['id'], '5-181766-A-10.wav')
         rain = review(rain, 'other', 'ESC-50 rain 라벨의 외부 환경음입니다. TV 소리로 확인한 기록이 아닙니다.')
         call('POST', f'/outings/{session["id"]}/end', params={'pet_id': PET}, json={})
     else:
         session = outings[0]
-        missed = by_source['ESC-50 / 5-208030-A-0.wav']
+        dog_second = by_source['ESC-50 / 5-208030-A-0.wav']
         rain = by_source['ESC-50 / 5-181766-A-10.wav']
-        missed_hash = hashlib.sha256((ROOT/'5-208030-A-0.wav').read_bytes()).hexdigest()
+        dog_second_hash = hashlib.sha256((ROOT/'5-208030-A-0.wav').read_bytes()).hexdigest()
         rain_hash = hashlib.sha256((ROOT/'5-181766-A-10.wav').read_bytes()).hexdigest()
     summary = call('GET', f'/outings/{session["id"]}/summary', params={'pet_id': PET})
     explanations = {}
@@ -70,17 +95,18 @@ def main():
     result = {'source': 'ESC-50 official test split; isolated local presentation database',
               'pet_id': PET, 'outing_ids': [outings[-1]['id'], session['id']],
               'input_sha256': {'dog_detected': hashlib.sha256((ROOT/'5-203128-A-0.wav').read_bytes()).hexdigest(),
-                               'dog_missed': missed_hash, 'rain': rain_hash},
-              'review_sources': [first['review']['source'], missed['review']['source'], rain['review']['source']],
+                               'dog_example_2': dog_second_hash, 'rain': rain_hash},
+              'review_sources': [first['review']['source'], dog_second['review']['source'], rain['review']['source']],
               'summary': {'sample_seconds': summary['sample_seconds'],
                           'bark_candidate_count': summary['bark_candidate_count'],
                           'unknown_seconds': summary['unknown_seconds']},
               'model_windows': {k: v['analysis'].get('audio_lstm', {}).get('windows', [])
-                                for k, v in [('dog_missed', missed), ('rain', rain)]},
+                                for k, v in [('dog_example_2', dog_second), ('rain', rain)]},
               'questions': {k: {'question': q['question'], 'provider': q['provider'],
                                 'retrieval_mode': q['retrieval_mode'], 'answer': q['answer'],
                                 'claims': q['claims']} for k, q in explanations.items()},
               'scope': 'Public dataset simulation, not longitudinal pet history or user-ground-truth accuracy'}
+    EVIDENCE.parent.mkdir(parents=True, exist_ok=True)
     EVIDENCE.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps({'summary': result['summary'],
                       'questions': {k: v['answer'] for k, v in result['questions'].items()}},
