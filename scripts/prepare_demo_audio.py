@@ -8,6 +8,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 from pathlib import Path
 
 import soundfile as sf
@@ -32,6 +33,20 @@ def validated_audio(content, expected_hash):
     return content
 
 
+def original_attribution(license_text, filename):
+    original = Path(filename).stem.rsplit('-', 1)[0]+'.ogg'
+    prefix = f'- [{original}]: '
+    line = next((line for line in license_text.decode('utf-8').splitlines()
+                 if line.startswith(prefix)), None)
+    match = re.fullmatch(r'- \[[^]]+\]: clip derived from (.+) \((https?://[^)]+)\) by (.+) \[([^]]+)\]',
+                         line or '')
+    if match is None:
+        raise ValueError(f'{filename}: original source attribution missing from ESC-50 license')
+    title, url, author, original_license = match.groups()
+    return {'original_title': title, 'original_source_url': url,
+            'original_author': author, 'original_license': original_license}
+
+
 def prepare(output, source_dir=None):
     output = Path(output)
     source_dir = Path(source_dir) if source_dir else None
@@ -51,9 +66,9 @@ def prepare(output, source_dir=None):
         else:
             content = download(BASE+'/audio/'+name)
         validated_audio(content, digest)
-        selected.append((name, content, row, digest))
+        selected.append((name, content, row, digest, original_attribution(license_text, name)))
     (output/'audio').mkdir(parents=True, exist_ok=True)
-    for name, content, _, _ in selected:
+    for name, content, _, _, _ in selected:
         target = output/'audio'/name
         temporary = target.with_suffix('.partial')
         temporary.write_bytes(content)
@@ -63,8 +78,9 @@ def prepare(output, source_dir=None):
     manifest = {'source': 'https://github.com/karolpiczak/ESC-50', 'revision': REVISION,
                 'purpose': 'public-audio UI demo only; official folds 1 and 5, never training or threshold selection',
                 'records': [{'filename': name, 'category': row['category'], 'fold': int(row['fold']),
-                             'src_file': row['src_file'], 'license': 'CC BY', 'sha256': digest}
-                            for name, _, row, digest in selected]}
+                             'src_file': row['src_file'], 'license': 'CC BY', 'sha256': digest,
+                             **attribution}
+                            for name, _, row, digest, attribution in selected]}
     (output/'demo_manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     return manifest
 

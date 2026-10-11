@@ -15,6 +15,15 @@
 
 ESC-50 음원은 공식 평가 분할의 공개 자료이며, 영상에는 실제 보호자 기록이나 반려견 감정·질환 판정이 없다. `5-203128-A-0.wav`의 원본 해시를 확인해 삽입했다. 화면의 `93.9/100`과 `44.5/100`은 특정 5초 입력의 실험 점수이고 정확도·확률이 아니다. FSD50K 평가 F1은 기존 0.436, 증강 후보 0.430으로 낮아 운영 체크포인트를 유지했다. 후보의 검증 점수 상승을 실제 현장 정확도 향상으로 소개하지 않는다.
 
+시연용 네 파일은 공식 ESC-50의 ESC-10 부분집합으로 데이터셋 라이선스는 **CC BY 3.0**이다. 각 원본은 공식 `LICENSE`에 **CC0**로 기재되어 있다. 준비 명령은 공식 라이선스 파일에서 아래 원저작자·원본 페이지를 추출해 `demo_manifest.json`에 기록한다. 영상에 직접 삽입한 것은 첫 번째 Dog 음원 한 개이며 원저작자 표기를 영상 화면에도 넣었다.
+
+| ESC-50 음원 | 원본 제공자·링크 | 공식 분할 |
+|---|---|---:|
+| `5-203128-A-0.wav` | [Pierre Grandjean · Freesound #203128](https://www.freesound.org/people/Pierre%20Grandjean/sounds/203128/) | 5 |
+| `5-208030-A-0.wav` | [Mewsel · Freesound #208030](https://www.freesound.org/people/Mewsel/sounds/208030/) | 5 |
+| `5-181766-A-10.wav` | [laura222 · Freesound #181766](https://www.freesound.org/people/laura222/sounds/181766/) | 5 |
+| `1-100032-A-0.wav` | [nfrae · Freesound #100032](https://www.freesound.org/people/nfrae/sounds/100032/) | 1 |
+
 재생성은 저장소 루트에서 아래 명령을 실행한다. 네 공개 음원은 별도 준비 명령이 공식 메타데이터·파일 해시로 검증해 Git 제외 `artifacts/datasets/esc50_demo/`에 둔다. 감지 사례와 놓친 사례 모두 [ESC-50 공식 자료](https://github.com/karolpiczak/ESC-50)의 평가 분할에 속하며 새 독립 평가로 계산하지 않는다. 생성 스크립트는 현재 저장된 브라우저 스크린샷, Windows 한국어 음성 합성, 공개 음원, 고정 평가 JSON을 사용한다.
 
 ```powershell

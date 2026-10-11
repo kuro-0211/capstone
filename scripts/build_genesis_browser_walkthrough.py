@@ -100,6 +100,10 @@ def main():
     data = json.loads((ROOT/'docs/evidence/audio_lstm_three_way.json').read_text(encoding='utf-8'))
     assert data['promoted'] is False
     metrics = data['evaluation']
+    manifest = json.loads((ROOT/'artifacts/datasets/esc50_demo/demo_manifest.json').read_text(encoding='utf-8'))
+    dog_source = next(row for row in manifest['records'] if row['filename'] == '5-203128-A-0.wav')
+    dog_credit = (f"ESC-10 · 원본 {dog_source['original_author']} "
+                  f"(Freesound #{dog_source['src_file']}, {dog_source['original_license']}) · 데이터셋 CC BY 3.0")
     browser_footer = '실제 로컬 브라우저 화면 · 별도 공개 시연 DB · 연속 클릭 녹화가 아닌 편집 영상'
     parts = [
       (18, '01  Genesis UI 적용', '기존 화면과 적용 후 화면 비교',
@@ -112,7 +116,7 @@ def main():
        '펫마인드는 반려견의 감정이나 질환을 단정하지 않습니다. 외출 기록을 중심으로 관찰 신호와 보호자 의견, 원본 근거를 함께 보여줍니다.'),
       (26, '03  공개 음원 입력과 감지', 'ESC-50 Dog · 5초 분석 창',
        '모델 점수 93.9/100\n기준 90.0/100\n\n출처를 공개 시연으로 표시.\n업로드 뒤 파일·동의 초기화.\n이제 원본 5초를 재생합니다.',
-       'verified_browser_second_upload_reset.png', browser_footer,
+       'verified_browser_second_upload_reset.png', dog_credit,
        '공개 이 에스 시 오십의 개 소리 자료를 입력했습니다. 오 초 분석 창의 모델 점수는 구십삼 점 구입니다. 이는 정확도나 감정 판정이 아닙니다. 입력 뒤 파일과 동의가 초기화됩니다.'),
       (23, '04  놓친 사례도 함께 공개', '다른 ESC-50 Dog 자료 · 동일 모델',
        'Dog 원본인데 44.5/100\n기준에 못 미쳐 놓침.\n\n에너지 짖음 후보와\nLSTM 결과가 다를 수 있음.\n시연 의견 ≠ 정답 라벨.',
