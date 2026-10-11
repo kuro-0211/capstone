@@ -34,6 +34,6 @@
 - `petmind_app/test/widget_test.dart`: 390px 화면에서 앱 바 및 스크롤 영역의 넘침을 확인한다.
 - `tests/test_fsd_archive.py`: 전체 Python 회귀에서 드러난 기존 FSD 테스트의 누락된 `deadline` 인자를 보완했다. UI 기능 변경은 아니다.
 
-스크린샷은 **공개 자료로 만든 시연 API 응답을 Flutter 위젯 테스트에 공급해 렌더링한 이미지**다. 실제 브라우저 클릭 녹화나 실제 반려견의 장기 기록으로 해석하면 안 된다. 캡처에는 한글을 읽을 수 있도록 Windows의 Malgun Gothic을 사용했다. 원본 디자인에서 지정한 General Sans·DM Sans 이름은 테마에 설정했지만 글꼴 파일을 앱에 포함하지 않았으므로 설치 환경의 대체 글꼴이 사용될 수 있다. 따라서 글꼴 획 모양까지 원본 디자인과 동일하다고 주장하지 않는다.
+스크린샷은 **공개 자료로 만든 시연 API 응답을 Flutter 위젯 테스트에 공급해 렌더링한 이미지**다. 디자인 적용 시점의 이미지여서 새 외출 기본값은 ‘합성 시연’으로 보이지만, 현재 실행 화면은 ‘사용자 음원’을 기본으로 한다. 실제 브라우저 클릭 녹화나 실제 반려견의 장기 기록으로 해석하면 안 된다. 캡처에는 한글을 읽을 수 있도록 Windows의 Malgun Gothic을 사용했다. 원본 디자인에서 지정한 General Sans·DM Sans 이름은 테마에 설정했지만 글꼴 파일을 앱에 포함하지 않았으므로 설치 환경의 대체 글꼴이 사용될 수 있다. 따라서 글꼴 획 모양까지 원본 디자인과 동일하다고 주장하지 않는다.
 
 검증: `flutter analyze`, `flutter test`, `flutter build web --release --no-web-resources-cdn`, `python -m pytest tests petmind/backend/tests -q -p no:cacheprovider`.
