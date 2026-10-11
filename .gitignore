@@ -1,42 +1,23 @@
-# Secrets
-.env
-
-# Python
 __pycache__/
-.pytest_cache/
-*.py[cod]
-*.pyo
+*.pyc
+*.m4a
 .venv/
-.backend-deps/
-venv/
-env/
-
-# Model weights (대용량 — Git LFS 또는 별도 보관)
-petmind/ai/*/weights/*.pt
-petmind/ai/*/weights/*.pkl
-petmind/ai/*/weights/behavior_v*/
-
-# Dataset (대용량)
-petmind/ai/*/data/images/
-petmind/ai/*/data/labels/
-petmind/ai/*/data/raw/
-petmind/ai/*/data/train/
-petmind/ai/*/data/val/
-petmind/ai/*/data/test/
-petmind/ai/*/data/_tmp*/
-petmind/ai/bark/data/**/*.wav
-
-# Database
-petmind/backend/*.db
-
-# Logs
+.env
+.pytest_cache/
+*.db
 *.log
+artifacts/
+.dart_tool/
+build/
+.flutter-plugins-dependencies
 runs/
-
-# IDE
 .vscode/
 .idea/
-
-# OS
+*.sqlite
+*.sqlite3
+*.pt
+*.pth
+*.onnx
+*.ckpt
 .DS_Store
 Thumbs.db

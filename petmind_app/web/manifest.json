@@ -1,11 +1,11 @@
 {
-    "name": "petmind_app",
-    "short_name": "petmind_app",
+    "name": "PetMind Care",
+    "short_name": "PetMind",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#101018",
+    "theme_color": "#6750a4",
+    "description": "반려견 관찰·개별 기록 기반 케어 제안 시제품",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

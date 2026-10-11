@@ -1,22 +1,10 @@
-$ErrorActionPreference = "Stop"
-$RepoRoot = Split-Path -Parent $PSScriptRoot
-$VenvPath = Join-Path $RepoRoot ".venv"
-$StudyPython = Join-Path $env:USERPROFILE "miniconda3\envs\study\python.exe"
-$CondaPython = Join-Path $env:USERPROFILE "miniconda3\python.exe"
-
-if (Test-Path -LiteralPath $StudyPython) {
-    & $StudyPython -m venv $VenvPath
-} elseif (Get-Command py -ErrorAction SilentlyContinue) {
-    & py -3 -m venv $VenvPath
-} elseif (Get-Command python -ErrorAction SilentlyContinue) {
-    & python -m venv $VenvPath
-} elseif (Test-Path -LiteralPath $CondaPython) {
-    & $CondaPython -m venv $VenvPath
-} else {
-    throw "Python 3 또는 Miniconda를 찾을 수 없습니다. Python 설치 후 다시 실행하세요."
+$ErrorActionPreference = 'Stop'
+Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
+if (-not (Test-Path -LiteralPath '.venv\Scripts\python.exe')) {
+    & python -m venv .venv
+    if ($LASTEXITCODE -ne 0) { throw 'Python 가상환경 생성 실패' }
 }
-
-$Python = Join-Path $VenvPath "Scripts\python.exe"
-& $Python -m pip install --upgrade pip
-& $Python -m pip install -r (Join-Path $RepoRoot "petmind\requirements-dev.txt")
-Write-Host "백엔드 환경 준비 완료: $VenvPath"
+& .\.venv\Scripts\python.exe -m pip install -r requirements-core.txt
+if ($LASTEXITCODE -ne 0) { throw '의존성 설치 실패' }
+& .\.venv\Scripts\python.exe -m pytest tests petmind\backend\tests -q -p no:cacheprovider
+if ($LASTEXITCODE -ne 0) { throw '테스트 실패' }

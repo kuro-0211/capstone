@@ -1,258 +1,157 @@
+"""Legacy approval/history flow adapted to observations and virtual device polling."""
+import asyncio
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from fastapi import HTTPException
-from pydantic import ValidationError
-from sqlalchemy.orm import Session
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 
-from database import CareActionLog, CareSuggestionLog, FeedingLog
-from mqtt_client import publish_feed, publish_music
-from providers import RuleBasedProvider, get_provider
-from schemas import (
-    CareActionOut,
-    CareActionType,
-    CareSuggestionDraft,
-    CareSuggestionOut,
-    PetContext,
-)
-from services.safety import validate_feeding
-from settings import settings
+from ..database import CareActionLog, CareSuggestionLog, ObservationLog, PetProfileLog, utcnow
+from ..mcp_client import retrieve_records
+from ..providers import RuleBasedProvider, get_provider
+from ..schemas import CareSuggestionDraft
+from ..settings import settings
+from .observations import care_context
+from . import retrieval
+from .profiles import profile_out
+from .frequency import compare_candidate_frequency
+from .query_plan import plan_query
 
 
-MUSIC_STYLES = {"calm_piano", "nature_sounds", "white_noise"}
+def suggestion_to_out(row):
+    return {'id': row.id, 'pet_id': row.pet_id, 'observation_id': row.observation_id,
+            'state': row.state, 'summary': row.summary, 'reasons': json.loads(row.reasons_json),
+            'recommended_actions': json.loads(row.recommended_actions_json), 'music_style': row.music_style,
+            'severity': row.severity, 'status': row.status, 'provider': row.provider,
+            'context': json.loads(row.context_json), 'retrieval': json.loads(row.retrieval_json),
+            'cited_observation_ids': json.loads(row.cited_ids_json), 'question': row.question,
+            'created_at': row.created_at.isoformat() + 'Z'}
 
 
-def _loads(value: str | None, default):
-    if not value:
-        return default
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return default
+def action_to_out(row):
+    return {'id': row.id, 'suggestion_id': row.suggestion_id, 'action_type': row.action_type,
+            'command_id': row.command_id, 'status': row.status, 'request': json.loads(row.request_json),
+            'result': json.loads(row.result_json) if row.result_json else None, 'error': row.error,
+            'created_at': row.created_at.isoformat() + 'Z', 'updated_at': row.updated_at.isoformat() + 'Z'}
 
 
-def suggestion_to_out(row: CareSuggestionLog) -> CareSuggestionOut:
-    return CareSuggestionOut(
-        id=row.id,
-        state=row.state,
-        summary=row.summary,
-        reasons=_loads(row.reasons_json, []),
-        recommended_actions=_loads(row.recommended_actions_json, []),
-        music_style=row.music_style,
-        feeding_amount_g=row.feeding_amount_g,
-        severity=row.severity,
-        status=row.status,
-        provider=row.provider,
-        context=PetContext.model_validate(_loads(row.context_json, {})),
-        created_at=row.created_at,
-    )
-
-
-def action_to_out(row: CareActionLog) -> CareActionOut:
-    return CareActionOut(
-        id=row.id,
-        suggestion_id=row.suggestion_id,
-        action_type=row.action_type,
-        command_id=row.command_id,
-        status=row.status,
-        request=_loads(row.request_json, {}),
-        result=_loads(row.result_json, None),
-        error=row.error,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-    )
-
-
-def evaluate(db: Session, context: PetContext) -> CareSuggestionOut:
+def evaluate(db, observation_id, question):
+    observation = db.get(ObservationLog, observation_id)
+    if observation is None:
+        raise HTTPException(404, '관찰 기록을 찾을 수 없습니다.')
+    context = care_context(observation)
+    before = observation.observed_at.isoformat()
+    query = question
+    plan = plan_query(question, before)
+    before = plan['before']
+    if settings.retrieval_mode == 'mcp':
+        try:
+            evidence = asyncio.run(retrieve_records(observation.pet_id, before, query, plan['days'],
+                                                   plan['start'], settings.semantic_enabled))
+        except Exception:
+            evidence = {'mode': 'mcp', 'status': 'failed', 'records': [], 'stats': {},
+                        'care_history': [], 'tool_calls': [], 'error': 'MCP 기록 조회 실패'}
+    else:
+        search = retrieval.search_result(db, observation.pet_id, before, query, plan['days'],
+                                         start=plan['start'], semantic=settings.semantic_enabled)
+        evidence = {'mode': 'local', 'status': 'ok', **search,
+                    'stats': retrieval.get_observation_stats(db, observation.pet_id, before, plan['days'], plan['start']),
+                    'care_history': retrieval.get_care_history(db, observation.pet_id, before, start=plan['start']),
+                    'tool_calls': []}
+    evidence['query_plan'] = plan
+    evidence['profile'] = profile_out(db.get(PetProfileLog, observation.pet_id))
+    evidence['frequency_comparison'] = compare_candidate_frequency(context, evidence)
     provider = get_provider()
     provider_name = provider.name
     try:
-        draft = CareSuggestionDraft.model_validate(provider.suggest(context))
-    except (Exception, ValidationError) as exc:
-        print(f"[Care] provider failed, using rules: {exc}")
-        provider = RuleBasedProvider()
-        provider_name = "rule-fallback"
-        draft = provider.suggest(context)
-
-    row = CareSuggestionLog(
-        state=draft.state,
-        summary=draft.summary,
-        reasons_json=json.dumps(draft.reasons, ensure_ascii=False),
-        recommended_actions_json=json.dumps(
-            [action.value for action in draft.recommended_actions], ensure_ascii=False
-        ),
-        music_style=draft.music_style,
-        feeding_amount_g=draft.feeding_amount_g,
-        severity=draft.severity.value,
-        status="pending" if draft.recommended_actions else "informational",
-        provider=provider_name,
-        context_json=context.model_dump_json(),
-    )
+        draft = CareSuggestionDraft.model_validate(provider.suggest(context, evidence, question))
+        if not set(draft.cited_observation_ids).issubset({r['id'] for r in evidence['records']}):
+            raise ValueError('provider cited a record outside retrieved evidence')
+    except Exception as exc:
+        provider_name = 'rule-fallback'
+        response = getattr(exc, 'response', None)
+        evidence['provider_failure'] = {'type': type(exc).__name__,
+                                       'http_status': response.status_code if response is not None else None}
+        draft = RuleBasedProvider().suggest(context, evidence, question)
+    row = CareSuggestionLog(observation_id=observation.id, pet_id=observation.pet_id,
+                            state=draft.state, summary=draft.summary,
+                            reasons_json=json.dumps(draft.reasons, ensure_ascii=False),
+                            recommended_actions_json=json.dumps(draft.recommended_actions),
+                            music_style=draft.music_style, severity=draft.severity,
+                            status='pending' if draft.recommended_actions else 'informational',
+                            provider=provider_name, context_json=context.model_dump_json(),
+                            retrieval_json=json.dumps(evidence, ensure_ascii=False),
+                            cited_ids_json=json.dumps(draft.cited_observation_ids), question=question)
     db.add(row)
     db.commit()
     db.refresh(row)
     return suggestion_to_out(row)
 
 
-def approve(db: Session, suggestion_id: int, action_type: CareActionType) -> CareActionOut:
-    suggestion = db.get(CareSuggestionLog, suggestion_id)
-    if not suggestion:
-        raise HTTPException(status_code=404, detail="케어 제안을 찾을 수 없습니다.")
-    if suggestion.status not in {"pending", "partially_approved", "action_failed"}:
-        raise HTTPException(status_code=409, detail="실행 가능한 액션이 남은 제안만 승인할 수 있습니다.")
-
-    allowed = _loads(suggestion.recommended_actions_json, [])
-    if action_type.value not in allowed:
-        raise HTTPException(status_code=422, detail="이 제안에 허용되지 않은 액션입니다.")
-
-    if (
-        db.query(CareActionLog)
-        .filter(
-            CareActionLog.suggestion_id == suggestion_id,
-            CareActionLog.action_type == action_type.value,
-        )
-        .first()
-    ):
-        raise HTTPException(status_code=409, detail="이미 실행 요청된 액션입니다.")
-
-    command_id = str(uuid.uuid4())
-    request: dict
-    simulate = settings.simulate_actions
-    published = simulate
-    feeding_log = None
-    if action_type == CareActionType.feeding:
-        amount = suggestion.feeding_amount_g or 0.0
-        validate_feeding(db, amount)
-        request = {"amount_g": amount}
-        feeding_log = FeedingLog(
-            amount_g=amount,
-            triggered_by="care_approved",
-            command_id=command_id,
-            status="requested",
-        )
-        db.add(feeding_log)
-        if not simulate:
-            published = publish_feed(command_id, amount)
-    else:
-        style = suggestion.music_style or "calm_piano"
-        if style not in MUSIC_STYLES:
-            raise HTTPException(status_code=422, detail="등록되지 않은 음악 유형입니다.")
-        request = {"style": style}
-        if not simulate:
-            published = publish_music(command_id, style)
-
-    status = "completed" if simulate else ("requested" if published else "failed")
-    error = None if published or simulate else "MQTT 명령 전송에 실패했습니다."
-    result = {"simulated": True} if simulate else None
-    row = CareActionLog(
-        suggestion_id=suggestion.id,
-        action_type=action_type.value,
-        command_id=command_id,
-        status=status,
-        request_json=json.dumps(request, ensure_ascii=False),
-        result_json=json.dumps(result) if result else None,
-        error=error,
-    )
-    if feeding_log:
-        feeding_log.status = status
-        feeding_log.error = error
-        if simulate:
-            feeding_log.actual_amount_g = feeding_log.amount_g
-    action_types = {
-        item.action_type
-        for item in db.query(CareActionLog)
-        .filter(CareActionLog.suggestion_id == suggestion_id)
-        .all()
-    }
-    action_types.add(action_type.value)
-    all_actions_requested = set(allowed).issubset(action_types)
-    if status == "failed":
-        suggestion.status = "action_failed"
-    elif all_actions_requested:
-        suggestion.status = "approved"
-    else:
-        suggestion.status = "partially_approved"
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return action_to_out(row)
-
-
-def dismiss(db: Session, suggestion_id: int) -> CareSuggestionOut:
-    suggestion = db.get(CareSuggestionLog, suggestion_id)
-    if not suggestion:
-        raise HTTPException(status_code=404, detail="케어 제안을 찾을 수 없습니다.")
-    if suggestion.status not in {"pending", "partially_approved", "action_failed"}:
-        raise HTTPException(status_code=409, detail="실행 가능한 액션이 남은 제안만 거절할 수 있습니다.")
-    suggestion.status = (
-        "partially_dismissed"
-        if db.query(CareActionLog)
-        .filter(CareActionLog.suggestion_id == suggestion_id)
-        .first()
-        else "dismissed"
-    )
-    db.commit()
-    db.refresh(suggestion)
-    return suggestion_to_out(suggestion)
-
-
-def acknowledge(
-    db: Session,
-    command_id: str,
-    status: str,
-    actual_amount_g: float | None = None,
-    detail: str | None = None,
-) -> CareActionOut:
-    if status not in {"acknowledged", "completed", "failed"}:
-        raise HTTPException(status_code=422, detail="지원하지 않는 액션 상태입니다.")
-    action = (
-        db.query(CareActionLog).filter(CareActionLog.command_id == command_id).first()
-    )
-    if not action:
-        raise HTTPException(status_code=404, detail="액션 명령을 찾을 수 없습니다.")
-    action.status = status
-    action.updated_at = datetime.utcnow()
-    action.error = detail if status == "failed" else None
-    action.result_json = json.dumps(
-        {"actual_amount_g": actual_amount_g, "detail": detail}, ensure_ascii=False
-    )
-    feeding = (
-        db.query(FeedingLog).filter(FeedingLog.command_id == command_id).first()
-    )
-    if feeding:
-        feeding.status = status
-        feeding.actual_amount_g = actual_amount_g
-        feeding.error = detail if status == "failed" else None
-    db.commit()
+def approve(db, suggestion_id, action_type):
+    row = db.get(CareSuggestionLog, suggestion_id)
+    if row is None:
+        raise HTTPException(404, '케어 제안을 찾을 수 없습니다.')
+    if action_type not in json.loads(row.recommended_actions_json):
+        raise HTTPException(422, '제안에 허용되지 않은 액션입니다.')
+    changed = db.execute(update(CareSuggestionLog).where(
+        CareSuggestionLog.id == suggestion_id, CareSuggestionLog.status == 'pending'
+    ).values(status='approved')).rowcount
+    if not changed:
+        db.rollback()
+        raise HTTPException(409, '이미 승인 또는 거절된 제안입니다.')
+    action = CareActionLog(suggestion_id=suggestion_id, command_id=str(uuid.uuid4()),
+                          request_json=json.dumps({'style': row.music_style, 'mode': 'simulated'}))
+    db.add(action)
+    try:
+        db.commit()  # Persist before the virtual agent can receive a command.
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, '이미 요청된 액션입니다.')
     db.refresh(action)
     return action_to_out(action)
 
 
-def expire_stale_actions(db: Session) -> int:
-    """Mark device commands without a terminal acknowledgement as failed."""
-    timeout_seconds = settings.action_timeout_seconds
-    deadline = datetime.utcnow() - timedelta(seconds=timeout_seconds)
-    actions = (
-        db.query(CareActionLog)
-        .filter(
-            CareActionLog.status.in_(["requested", "acknowledged"]),
-            CareActionLog.created_at < deadline,
-        )
-        .all()
-    )
-    for action in actions:
-        action.status = "failed"
-        action.error = "장치 완료 응답 시간이 초과되었습니다."
-        action.updated_at = datetime.utcnow()
-        feeding = (
-            db.query(FeedingLog)
-            .filter(FeedingLog.command_id == action.command_id)
-            .first()
-        )
-        if feeding:
-            feeding.status = "failed"
-            feeding.error = action.error
-    if actions:
-        db.commit()
-    return len(actions)
+def dismiss(db, suggestion_id):
+    row = db.get(CareSuggestionLog, suggestion_id)
+    if row is None:
+        raise HTTPException(404, '케어 제안을 찾을 수 없습니다.')
+    changed = db.execute(update(CareSuggestionLog).where(
+        CareSuggestionLog.id == suggestion_id, CareSuggestionLog.status == 'pending'
+    ).values(status='dismissed')).rowcount
+    if not changed:
+        db.rollback()
+        raise HTTPException(409, '대기 중인 제안만 거절할 수 있습니다.')
+    db.commit()
+    db.refresh(row)
+    return suggestion_to_out(row)
+
+
+def expire_stale_actions(db):
+    deadline = utcnow() - timedelta(seconds=settings.action_timeout_seconds)
+    db.execute(update(CareActionLog).where(
+        CareActionLog.status.in_(['requested', 'acknowledged']), CareActionLog.created_at < deadline
+    ).values(status='timed_out', error='가상 장치 완료 응답 시간 초과', updated_at=utcnow()))
+    db.commit()
+
+
+def acknowledge(db, command_id, status, detail):
+    expire_stale_actions(db)
+    row = db.scalars(select(CareActionLog).where(CareActionLog.command_id == command_id)).first()
+    if row is None:
+        raise HTTPException(404, '명령을 찾을 수 없습니다.')
+    if row.status == status:
+        return action_to_out(row)
+    predecessors = ['requested'] if status == 'acknowledged' else ['acknowledged']
+    changed = db.execute(update(CareActionLog).where(
+        CareActionLog.id == row.id, CareActionLog.status.in_(predecessors)
+    ).values(status=status, updated_at=utcnow(), error=detail if status == 'failed' else None,
+             result_json=json.dumps({'simulated': True, 'detail': detail}, ensure_ascii=False))).rowcount
+    if not changed:
+        db.rollback()
+        raise HTTPException(409, '현재 상태에서 해당 응답으로 변경할 수 없습니다.')
+    db.commit()
+    db.refresh(row)
+    return action_to_out(row)

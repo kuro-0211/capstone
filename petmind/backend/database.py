@@ -1,93 +1,97 @@
-from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, ForeignKey
+"""SQLite observation, suggestion and command persistence, adapted from legacy backend."""
+from datetime import datetime, timezone
+
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from settings import settings
+from .settings import settings
 
 
-DATABASE_URL = settings.database_url
-engine_kwargs = {}
-if DATABASE_URL.startswith("sqlite"):
-    engine_kwargs["connect_args"] = {"check_same_thread": False}
-if DATABASE_URL == "sqlite://":
-    engine_kwargs["poolclass"] = StaticPool
-engine = create_engine(DATABASE_URL, **engine_kwargs)
+def utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+kwargs = {'connect_args': {'check_same_thread': False}} if settings.database_url.startswith('sqlite') else {}
+if settings.database_url in {'sqlite://', 'sqlite:///:memory:'}:
+    kwargs['poolclass'] = StaticPool
+engine = create_engine(settings.database_url, **kwargs)
+if settings.database_url.startswith('sqlite'):
+    @event.listens_for(engine, 'connect')
+    def _enable_foreign_keys(connection, _record):
+        connection.execute('PRAGMA foreign_keys=ON')
+
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
 
-class AnalysisLog(Base):
-    __tablename__ = "analysis_logs"
-    id         = Column(Integer, primary_key=True, index=True)
-    behavior   = Column(String, nullable=False)
-    behavior_conf = Column(Float)
-    emotion    = Column(String, nullable=False)
-    emotion_conf  = Column(Float)
-    timestamp  = Column(DateTime, default=datetime.utcnow)
+class ObservationLog(Base):
+    __tablename__ = 'observations'
+    id = Column(Integer, primary_key=True)
+    pet_id = Column(String, nullable=False, index=True)
+    session_id = Column(String, nullable=False, index=True)
+    observed_at = Column(DateTime, nullable=False, index=True)
+    source = Column(String, nullable=False)
+    context_json = Column(Text, nullable=False)
+    summary = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+    __table_args__ = (UniqueConstraint('pet_id', 'session_id', 'observed_at', name='observation_identity'),)
 
 
-class FeedingLog(Base):
-    __tablename__ = "feeding_logs"
-    id        = Column(Integer, primary_key=True, index=True)
-    amount_g  = Column(Float, nullable=False)
-    triggered_by = Column(String, default="manual")  # manual | auto
-    command_id = Column(String, unique=True, index=True, nullable=True)
-    status = Column(String, default="completed")
-    actual_amount_g = Column(Float, nullable=True)
-    error = Column(Text, nullable=True)
-    timestamp = Column(DateTime, default=datetime.utcnow)
-
-
-class SensorLog(Base):
-    __tablename__ = "sensor_logs"
-    id = Column(Integer, primary_key=True, index=True)
-    temperature = Column(Float, nullable=True)
-    humidity = Column(Float, nullable=True)
-    feed_remaining_g = Column(Float, nullable=True)
-    bark_detected = Column(Integer, default=0)
-    bark_count = Column(Integer, default=0)
-    bark_volume = Column(Float, default=0.0)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+class PetProfileLog(Base):
+    __tablename__ = 'pet_profiles'
+    pet_id = Column(String, primary_key=True)
+    profile_json = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class CareSuggestionLog(Base):
-    __tablename__ = "care_suggestions"
-    id = Column(Integer, primary_key=True, index=True)
+    __tablename__ = 'care_suggestions'
+    id = Column(Integer, primary_key=True)
+    observation_id = Column(Integer, ForeignKey('observations.id'), nullable=False)
+    pet_id = Column(String, nullable=False, index=True)
     state = Column(String, nullable=False)
     summary = Column(Text, nullable=False)
-    reasons_json = Column(Text, nullable=False, default="[]")
-    recommended_actions_json = Column(Text, nullable=False, default="[]")
-    music_style = Column(String, nullable=True)
-    feeding_amount_g = Column(Float, nullable=True)
-    severity = Column(String, nullable=False, default="info")
-    status = Column(String, nullable=False, default="pending")
-    provider = Column(String, nullable=False, default="rule")
+    reasons_json = Column(Text, nullable=False, default='[]')
+    recommended_actions_json = Column(Text, nullable=False, default='[]')
+    music_style = Column(String)
+    severity = Column(String, nullable=False, default='info')
+    status = Column(String, nullable=False, default='pending')
+    provider = Column(String, nullable=False)
     context_json = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    retrieval_json = Column(Text, nullable=False)
+    cited_ids_json = Column(Text, nullable=False, default='[]')
+    question = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=utcnow, index=True)
 
 
 class CareActionLog(Base):
-    __tablename__ = "care_actions"
-    id = Column(Integer, primary_key=True, index=True)
-    suggestion_id = Column(Integer, ForeignKey("care_suggestions.id"), nullable=False, index=True)
-    action_type = Column(String, nullable=False)
-    command_id = Column(String, unique=True, index=True, nullable=False)
-    status = Column(String, nullable=False, default="requested")
-    request_json = Column(Text, nullable=False, default="{}")
-    result_json = Column(Text, nullable=True)
-    error = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __tablename__ = 'care_actions'
+    id = Column(Integer, primary_key=True)
+    suggestion_id = Column(Integer, ForeignKey('care_suggestions.id'), nullable=False, unique=True)
+    command_id = Column(String, nullable=False, unique=True, index=True)
+    action_type = Column(String, nullable=False, default='music')
+    status = Column(String, nullable=False, default='requested')
+    request_json = Column(Text, nullable=False)
+    result_json = Column(Text)
+    error = Column(Text)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class FeedbackLog(Base):
+    __tablename__ = 'guardian_feedback'
+    id = Column(Integer, primary_key=True)
+    observation_id = Column(Integer, ForeignKey('observations.id'), nullable=False, index=True)
+    suggestion_id = Column(Integer, ForeignKey('care_suggestions.id'))
+    feedback_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
 
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(engine)
 
 
 def get_db():
-    db = SessionLocal()
-    try:
+    with SessionLocal() as db:
         yield db
-    finally:
-        db.close()

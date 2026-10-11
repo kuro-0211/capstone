@@ -1,71 +1,144 @@
-"""
-PetMind 백엔드 서버 (FastAPI + SQLite + MQTT)
-
-실행:
-    cd petmind/backend
-    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-
-API 문서:
-    http://localhost:8000/docs
-"""
+"""Run from repository root: python -m uvicorn petmind.backend.main:app --port 8010."""
+import json
+import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 
-from database import SessionLocal, init_db
-from routers import analysis, feeding, sensors, care
-from settings import settings
+from pet_monitor.bark import BarkDetector
+from pet_monitor.build import build_context
+from pet_monitor.simulator import make_scenario
+from .database import CareActionLog, CareSuggestionLog, ObservationLog, SessionLocal, get_db, init_db
+from .routers.care import router as care_router
+from .routers.media import router as media_router
+from .routers.pets import router as pets_router
+from .routers.feedback import router as feedback_router
+from .routers.comparisons import router as comparisons_router
+from .schemas import DemoRequest, ObservationIn, ObservationOut
+from .services.observations import save, to_out
+from .settings import settings
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(app):
     init_db()
-    print("PetMind 서버 시작됨")
     yield
 
 
-app = FastAPI(title="PetMind API", version="2.0.0", lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(analysis.router)
-app.include_router(feeding.router)
-app.include_router(sensors.router)
-app.include_router(care.router)
+app = FastAPI(title='PetMind integrated API', version='0.3.0', lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origin_regex=r'http://(localhost|127\.0\.0\.1)(:\d+)?',
+                   allow_methods=['GET', 'POST'], allow_headers=['Content-Type'])
+app.include_router(care_router)
+app.include_router(media_router)
+app.include_router(pets_router)
+app.include_router(feedback_router)
+app.include_router(comparisons_router)
 
 
-@app.get("/")
-def root():
-    return {
-        "status": "ok",
-        "service": "PetMind API",
-        "version": app.version,
-        "docs": "/docs",
-    }
-
-
-@app.get("/health")
+@app.get('/health')
 def health():
-    database_ok = False
-    try:
-        with SessionLocal() as db:
-            db.execute(text("SELECT 1"))
-        database_ok = True
-    except Exception as exc:
-        print(f"[Health] database failed: {exc}")
-    return {
-        "status": "healthy" if database_ok else "degraded",
-        "components": {
-            "database": "ok" if database_ok else "failed",
-            "care_provider": settings.provider,
-            "action_mode": "simulation" if settings.simulate_actions else "mqtt",
-            "mqtt_target": f"{settings.mqtt_broker}:{settings.mqtt_port}",
-        },
-    }
+    with SessionLocal() as db:
+        db.execute(text('SELECT 1'))
+    return {'status': 'healthy', 'components': {'database': 'ok', 'care_provider': settings.provider,
+            'gemini_key_configured': bool(settings.gemini_api_key), 'retrieval_mode': settings.retrieval_mode,
+            'action_mode': 'simulated'}, 'version': app.version}
+
+
+@app.post('/observations', response_model=ObservationOut, status_code=201)
+def create_observation(data: ObservationIn, db=Depends(get_db)):
+    return save(db, data)
+
+
+@app.get('/observations', response_model=list[ObservationOut])
+def list_observations(pet_id: str, limit: int = Query(20, ge=1, le=100),
+                      since: datetime | None = None, until: datetime | None = None, db=Depends(get_db)):
+    query = select(ObservationLog).where(ObservationLog.pet_id == pet_id)
+    for value in (since, until):
+        if value is not None and value.tzinfo is None:
+            from fastapi import HTTPException
+            raise HTTPException(422, '기간 조회 시 timezone이 필요합니다.')
+    if since:
+        query = query.where(ObservationLog.observed_at >= since.astimezone(timezone.utc).replace(tzinfo=None))
+    if until:
+        query = query.where(ObservationLog.observed_at <= until.astimezone(timezone.utc).replace(tzinfo=None))
+    rows = db.scalars(query.order_by(ObservationLog.observed_at.desc()).limit(limit)).all()
+    return [to_out(row) for row in rows]
+
+
+def analyze_demo(name):
+    audio, observations = make_scenario(name)
+    detector = BarkDetector()
+    detector.feed(audio)
+    context = build_context(detector, observations).to_dict()
+    checkpoint = Path('artifacts/lstm/trajectory_lstm.pt')
+    if checkpoint.exists():
+        from pet_monitor.lstm import LSTMPredictor
+        predictor = LSTMPredictor(checkpoint)
+        durations = {}
+        for i, observation in enumerate(observations):
+            label = predictor.predict(observations[:i+1])['label']
+            end = observations[i+1].t if i+1 < len(observations) else detector.now_s
+            durations[label] = durations.get(label, 0) + end - observation.t
+        context['motion']['seconds_by_label'] = durations
+        context['motion']['dominant'] = max(durations, key=durations.get)
+        context['motion_model'] = 'lstm_synthetic'
+        context['lstm_metadata'] = {'feature_version': predictor.feature_version,
+                                    'training_source': predictor.training_source}
+        context['input_note'] = '합성 좌표·음성 시나리오; LSTM 행동 분류는 합성 라벨 학습; 실제 행동 정확도 미검증'
+    return context
+
+
+@app.post('/demo/observe', response_model=ObservationOut, status_code=201)
+def demo_observe(data: DemoRequest, db=Depends(get_db)):
+    return save(db, ObservationIn(pet_id=data.pet_id, session_id=f'demo-{uuid.uuid4()}',
+                                 observed_at=datetime.now(timezone.utc), source='synthetic_demo',
+                                 context=analyze_demo(data.scenario)))
+
+
+@app.post('/demo/seed')
+def seed_history(data: DemoRequest, db=Depends(get_db)):
+    count = db.scalar(select(func.count()).select_from(ObservationLog).where(
+        ObservationLog.pet_id == data.pet_id, ObservationLog.session_id.like('seed-%')))
+    if count:
+        return {'created': 0, 'existing': count, 'source': 'synthetic_demo'}
+    now = datetime.now(timezone.utc)
+    for i, scenario in enumerate(['calm', 'bored_pacing', 'anxious']):
+        save(db, ObservationIn(pet_id=data.pet_id, session_id=f'seed-{scenario}',
+                              observed_at=now - timedelta(days=3-i), source='synthetic_demo',
+                              context=analyze_demo(scenario)))
+    return {'created': 3, 'source': 'synthetic_demo'}
+
+
+@app.get('/timeline')
+def timeline(pet_id: str, db=Depends(get_db)):
+    events = []
+    for row in db.scalars(select(ObservationLog).where(ObservationLog.pet_id == pet_id)
+                          .order_by(ObservationLog.created_at.desc()).limit(30)):
+        events.append({'type': 'observation', 'id': row.id, 'at': row.created_at.isoformat() + 'Z',
+                       'detail': row.summary, 'session_id': row.session_id, 'source': row.source})
+    for row in db.scalars(select(CareSuggestionLog).where(CareSuggestionLog.pet_id == pet_id)
+                          .order_by(CareSuggestionLog.created_at.desc()).limit(30)):
+        events.append({'type': 'suggestion', 'id': row.id, 'at': row.created_at.isoformat() + 'Z',
+                       'detail': row.summary, 'observation_id': row.observation_id, 'status': row.status})
+    for row in db.scalars(select(CareActionLog).join(CareSuggestionLog)
+                          .where(CareSuggestionLog.pet_id == pet_id)
+                          .order_by(CareActionLog.updated_at.desc()).limit(30)):
+        events.append({'type': 'action', 'id': row.id, 'at': row.updated_at.isoformat() + 'Z',
+                       'detail': f'가상 음악: {row.status}', 'suggestion_id': row.suggestion_id})
+    return sorted(events, key=lambda event: event['at'], reverse=True)[:50]
+
+
+@app.get('/metrics')
+def metrics(pet_id: str, db=Depends(get_db)):
+    observations = db.scalar(select(func.count()).select_from(ObservationLog).where(ObservationLog.pet_id == pet_id))
+    suggestions = db.scalars(select(CareSuggestionLog).where(CareSuggestionLog.pet_id == pet_id)).all()
+    actions = db.scalars(select(CareActionLog).join(CareSuggestionLog).where(CareSuggestionLog.pet_id == pet_id)).all()
+    return {'observations': observations, 'suggestions': len(suggestions),
+            'mcp_successes': sum(json.loads(row.retrieval_json)['mode'] == 'mcp' and json.loads(row.retrieval_json)['status'] == 'ok' for row in suggestions),
+            'gemini_successes': sum(row.provider.startswith('gemini:') for row in suggestions),
+            'actions_completed': sum(row.status == 'completed' for row in actions),
+            'actions_failed': sum(row.status in {'failed', 'timed_out'} for row in actions)}

@@ -1,1 +1,0 @@
-"""PetMind application package."""
