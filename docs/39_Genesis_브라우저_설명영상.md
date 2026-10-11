@@ -8,7 +8,7 @@
 | 00:18–00:36 | 실제 브라우저 첫 화면·외출 흐름 | `verified_browser_dashboard_top.png` |
 | 00:36–01:02 | 공개 Dog 음원 감지, 원본 5초 재생, 업로드 후 입력 초기화 | `verified_browser_second_upload_reset.png`, ESC-50 `5-203128-A-0.wav` |
 | 01:02–01:25 | 동일 모델이 놓친 공개 Dog 사례 | `verified_browser_audio_review.png`, ESC-50 `1-100032-A-0.wav` |
-| 01:25–01:47 | 귀가 요약 수치·시연 출처·관찰 근거 | `verified_browser_summary.png` |
+| 01:25–01:47 | 앞의 놓친 사례 한 건이 연결된 외출의 귀가 요약·시연 출처·관찰 근거 | `verified_browser_summary.png` |
 | 01:47–02:09 | 시간 질문에 표본·판단 불가·출처 근거로 답하는 화면 | `verified_browser_duration_question.png` |
 | 02:09–02:33 | 기존 LSTM과 증강·MIL 후보의 동일 평가 자료 F1 | [`audio_lstm_three_way.json`](evidence/audio_lstm_three_way.json) |
 | 02:33–02:57 | 실제 가정 음향·사람 정답·독립 평가의 남은 과제 | 현재 구현·검증 한계 |
