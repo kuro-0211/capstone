@@ -62,8 +62,9 @@ class ObservationIn(StrictModel):
     pet_id: str = Field(min_length=1, max_length=80)
     session_id: str = Field(min_length=1, max_length=120)
     observed_at: datetime
-    source: Literal['synthetic_demo', 'public_media', 'live']
+    source: Literal['synthetic_demo', 'public_media', 'live', 'user_audio']
     context: AnalysisContext
+    outing_id: str | None = Field(default=None, min_length=1, max_length=80)
 
     @field_validator('observed_at')
     @classmethod
@@ -134,3 +135,4 @@ class ActionAckIn(StrictModel):
 class DemoRequest(StrictModel):
     scenario: Literal['calm', 'anxious', 'bored_pacing'] = 'anxious'
     pet_id: str = Field(default='demo-dog', min_length=1, max_length=80)
+    outing_id: str | None = Field(default=None, min_length=1, max_length=80)

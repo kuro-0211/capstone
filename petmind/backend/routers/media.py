@@ -22,6 +22,7 @@ class MediaRequest(BaseModel):
     pet_id: str = Field(min_length=1, max_length=80)
     audio_filename: str
     include_video: bool = True
+    outing_id: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 def manifest():
@@ -78,7 +79,22 @@ def media_observe(data: MediaRequest, db=Depends(get_db)):
         if video['source'].get('original_fps_verified') is False:
             note += f'; DAVIS 이미지 시퀀스 {video["source"]["replay_fps"]}fps 재생용 재구성, 원본 녹화 시간 미검증'
     context['input_note'] = note
+    media = None
+    if video:
+        import hashlib
+        source = video['source']
+        path = (FOLDER / source['filename']).resolve()
+        if not path.is_relative_to(FOLDER.resolve()) or not path.is_file():
+            raise HTTPException(409, '관찰 근거로 연결할 원본 영상을 준비해 주세요.')
+        with path.open('rb') as stream:
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        if source.get('sha256') != digest:
+            raise HTTPException(409, '영상과 분석 결과의 해시가 다릅니다. 영상을 다시 분석해 주세요.')
+        media = {'filename': source['filename'], 'sha256': digest,
+                 'start_s': start, 'end_s': duration,
+                 'source_json': json.dumps(source, ensure_ascii=False)}
     row = save(db, ObservationIn(pet_id=data.pet_id, session_id='public-' + uuid.uuid4().hex,
-                                observed_at=datetime.now(timezone.utc), source='public_media', context=context))
+                                observed_at=datetime.now(timezone.utc), source='public_media', context=context,
+                                outing_id=data.outing_id), media=media)
     return {'observation': row.model_dump(mode='json'), 'audio': audio, 'video': video,
             'sources': [item] + ([video['source']] if video else [])}

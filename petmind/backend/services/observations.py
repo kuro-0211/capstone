@@ -4,17 +4,40 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
 from pet_monitor.context import MOTION_LABELS_KO
-from ..database import ObservationLog
+from sqlalchemy import update
+from ..database import ObservationLog, OutingLog, OutingObservation, ObservationMedia, utcnow
 from ..schemas import ObservationIn, ObservationOut, PetContext
 
 
 def to_out(row):
+    from sqlalchemy.orm import object_session
+    db = object_session(row)
+    link = db.get(OutingObservation, row.id) if db else None
     return ObservationOut(id=row.id, pet_id=row.pet_id, session_id=row.session_id,
                           observed_at=row.observed_at, source=row.source,
-                          context=json.loads(row.context_json), summary=row.summary)
+                          context=json.loads(row.context_json), summary=row.summary,
+                          outing_id=link.outing_id if link else None)
 
 
-def save(db, data: ObservationIn):
+def save(db, data: ObservationIn, media=None, commit=True):
+    if data.outing_id:
+        outing = db.get(OutingLog, data.outing_id)
+        if outing is None or outing.pet_id != data.pet_id:
+            raise HTTPException(404, '이 반려견의 외출 기록을 찾을 수 없습니다.')
+        expected = {'synthetic_demo': 'synthetic_demo', 'prepared_video': 'public_media', 'live': 'live', 'uploaded_audio': 'user_audio'}
+        if expected[outing.input_mode] != data.source:
+            raise HTTPException(422, '외출의 입력 모드와 관찰 출처가 다릅니다.')
+        if data.observed_at < outing.started_at or data.observed_at > utcnow():
+            raise HTTPException(422, '외출 시작 이후 현재까지의 관찰만 연결할 수 있습니다.')
+        if data.source == 'live':
+            from datetime import timedelta
+            if data.observed_at - timedelta(seconds=data.context.window_s) < outing.started_at:
+                raise HTTPException(422, '실시간 관찰 구간은 외출 시작 이후여야 합니다.')
+        locked = db.execute(update(OutingLog).where(OutingLog.id == data.outing_id,
+                             OutingLog.ended_at.is_(None)).values(title=OutingLog.title)).rowcount
+        if not locked:
+            db.rollback()
+            raise HTTPException(409, '종료된 외출에는 관찰을 추가할 수 없습니다.')
     b, m = data.context.bark, data.context.motion
     summary = (f'{data.context.window_s:g}초 관찰: 짖음 후보 {b.count}회, '
                f'주된 궤적 {MOTION_LABELS_KO[m.dominant]}.')
@@ -23,12 +46,22 @@ def save(db, data: ObservationIn):
                          context_json=data.context.model_dump_json(), summary=summary)
     db.add(row)
     try:
-        db.commit()
+        db.flush()
+        if data.outing_id:
+            db.add(OutingObservation(observation_id=row.id, outing_id=data.outing_id))
+        if media:
+            db.add(ObservationMedia(observation_id=row.id, **media))
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, '같은 세션·시각의 관찰이 이미 저장되어 있습니다.')
     db.refresh(row)
-    return to_out(row)
+    result = to_out(row)
+    result.outing_id = data.outing_id
+    return result
 
 
 def care_context(row):

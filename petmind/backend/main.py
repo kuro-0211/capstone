@@ -1,7 +1,8 @@
 """Run from repository root: python -m uvicorn petmind.backend.main:app --port 8010."""
 import json
+import asyncio
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -18,15 +19,26 @@ from .routers.media import router as media_router
 from .routers.pets import router as pets_router
 from .routers.feedback import router as feedback_router
 from .routers.comparisons import router as comparisons_router
+from .routers.outings import router as outings_router
+from .routers.audio_clips import router as audio_clips_router
 from .schemas import DemoRequest, ObservationIn, ObservationOut
 from .services.observations import save, to_out
+from .services.audio_retention import cleanup_once, cleanup_loop
+from starlette.concurrency import run_in_threadpool
 from .settings import settings
 
 
 @asynccontextmanager
 async def lifespan(app):
     init_db()
-    yield
+    await run_in_threadpool(cleanup_once)
+    maintenance = asyncio.create_task(cleanup_loop())
+    try:
+        yield
+    finally:
+        maintenance.cancel()
+        with suppress(asyncio.CancelledError):
+            await maintenance
 
 
 app = FastAPI(title='PetMind integrated API', version='0.3.0', lifespan=lifespan)
@@ -37,6 +49,8 @@ app.include_router(media_router)
 app.include_router(pets_router)
 app.include_router(feedback_router)
 app.include_router(comparisons_router)
+app.include_router(outings_router)
+app.include_router(audio_clips_router)
 
 
 @app.get('/health')
@@ -96,7 +110,7 @@ def analyze_demo(name):
 def demo_observe(data: DemoRequest, db=Depends(get_db)):
     return save(db, ObservationIn(pet_id=data.pet_id, session_id=f'demo-{uuid.uuid4()}',
                                  observed_at=datetime.now(timezone.utc), source='synthetic_demo',
-                                 context=analyze_demo(data.scenario)))
+                                 context=analyze_demo(data.scenario), outing_id=data.outing_id))
 
 
 @app.post('/demo/seed')

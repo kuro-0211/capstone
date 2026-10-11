@@ -22,6 +22,7 @@ def client(tmp_path, monkeypatch):
             yield db
     main.app.dependency_overrides[get_db] = db_override
     monkeypatch.setattr(main, 'init_db', lambda: None)
+    monkeypatch.setattr(main, 'cleanup_once', lambda: None)
     monkeypatch.setattr(care, 'settings', replace(care.settings, provider='rule', retrieval_mode='local', semantic_enabled=False))
     monkeypatch.setattr(mcp_client, 'settings', replace(mcp_client.settings, database_url=url))
     # Provider selection is independent from the retrieval mode.

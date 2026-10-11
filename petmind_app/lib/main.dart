@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'outings_panel.dart';
 
 const String apiBase = String.fromEnvironment(
   'PETMIND_API_BASE',
@@ -50,6 +51,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Map<String, dynamic>? savedFeedback;
   Map<String, dynamic>? baseline;
   Map<String, dynamic>? comparison;
+  Map<String, dynamic>? activeOuting;
   Map<String, dynamic> metrics = {};
   List<dynamic> timeline = const [];
   Map<String, dynamic> catalog = {};
@@ -160,8 +162,13 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> demo(String scenario) async {
+    if (activeOuting != null && activeOuting!['input_mode'] != 'synthetic_demo') {
+      setState(() => notice = '진행 중 외출은 준비된 영상 모드입니다. 공개 입력을 사용하거나 외출을 종료해 주세요.');
+      return;
+    }
     await _run(() async {
-      observation = await _post('/demo/observe', {'pet_id': petId, 'scenario': scenario}) as Map<String, dynamic>;
+      observation = await _post('/demo/observe', {'pet_id': petId, 'scenario': scenario,
+        if (activeOuting != null) 'outing_id': activeOuting!['id']}) as Map<String, dynamic>;
       suggestion = await _post('/care/evaluate', {
         'observation_id': observation!['id'], 'question': question.text,
       }) as Map<String, dynamic>;
@@ -180,10 +187,15 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> analyzePublicMedia() async {
     if (audioFilename == null) return;
+    if (activeOuting != null && activeOuting!['input_mode'] != 'prepared_video') {
+      setState(() => notice = '진행 중 외출은 합성 시연 모드입니다. 시연 입력을 사용하거나 외출을 종료해 주세요.');
+      return;
+    }
     await _run(() async {
       mediaResult = await _post('/media/observe', {
         'pet_id': petId, 'audio_filename': audioFilename,
         'include_video': includeVideo && catalog['video_prepared'] == true,
+        if (activeOuting != null) 'outing_id': activeOuting!['id'],
       }) as Map<String, dynamic>;
       observation = mediaResult!['observation'] as Map<String, dynamic>;
       suggestion = await _post('/care/evaluate', {
@@ -283,6 +295,10 @@ class _DashboardPageState extends State<DashboardPage> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
+            OutingsPanel(client: client, base: apiBase, petId: petId,
+              observationId: observation?['id'] as int?,
+              onActiveChanged: (value) { activeOuting = value; }),
+            const SizedBox(height: 16),
             _inputCard(),
             const SizedBox(height: 16),
             _mediaCard(),
@@ -339,7 +355,7 @@ class _DashboardPageState extends State<DashboardPage> {
             setState(() {
               petId = value; observation = null; suggestion = null;
               actions = const []; timeline = const []; metrics = {}; mediaResult = null; profile = null;
-              savedFeedback = null; baseline = null; comparison = null;
+              savedFeedback = null; baseline = null; comparison = null; activeOuting = null;
             });
             refresh();
           },

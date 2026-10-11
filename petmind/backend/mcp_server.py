@@ -29,5 +29,14 @@ def get_care_history(pet_id: str, before: str, limit: int = 5, start: str | None
         return {'history': retrieval.get_care_history(db, pet_id, before, limit, start)}
 
 
+@server.tool()
+def get_outing_facts(pet_id: str, outing_id: str, question: str) -> dict:
+    """Return exact computed facts and observation IDs for one pet's outing."""
+    from .services.outings import require_outing, facts_for_report
+    with SessionLocal() as db:
+        report, facts = facts_for_report(db, require_outing(db, outing_id, pet_id), question)
+        return {'report': report, 'facts': facts}
+
+
 if __name__ == '__main__':
     server.run(transport='stdio')

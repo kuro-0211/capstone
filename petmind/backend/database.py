@@ -1,7 +1,7 @@
 """SQLite observation, suggestion and command persistence, adapted from legacy backend."""
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, event
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, Float, Index, UniqueConstraint, create_engine, event, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -86,6 +86,62 @@ class FeedbackLog(Base):
     suggestion_id = Column(Integer, ForeignKey('care_suggestions.id'))
     feedback_json = Column(Text, nullable=False)
     created_at = Column(DateTime, default=utcnow)
+
+
+class AudioClipLog(Base):
+    __tablename__ = 'audio_clips'
+    id = Column(String, primary_key=True)
+    pet_id = Column(String, nullable=False, index=True)
+    observation_id = Column(Integer, ForeignKey('observations.id'), nullable=False, unique=True)
+    filename = Column(String, nullable=False)
+    sha256 = Column(String, nullable=False)
+    duration_s = Column(Float, nullable=False)
+    training_consent = Column(Integer, nullable=False, default=0)
+    expires_at = Column(DateTime, nullable=False)
+    deleted_at = Column(DateTime)
+    analysis_json = Column(Text, nullable=False)
+    review_json = Column(Text, nullable=False, default='{}')
+    verified_at = Column(DateTime)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class AudioVerificationLog(Base):
+    __tablename__ = 'audio_verifications'
+    clip_id = Column(String, ForeignKey('audio_clips.id'), primary_key=True)
+    label = Column(String, nullable=False)
+    reviewer = Column(String, nullable=False)
+    reason = Column(Text, nullable=False)
+    review_sha256 = Column(String, nullable=False)
+    audio_sha256 = Column(String, nullable=False)
+    verified_at = Column(DateTime, nullable=False, default=utcnow)
+
+
+class OutingLog(Base):
+    __tablename__ = 'outings'
+    id = Column(String, primary_key=True)
+    pet_id = Column(String, nullable=False, index=True)
+    title = Column(String, nullable=False)
+    input_mode = Column(String, nullable=False)
+    started_at = Column(DateTime, nullable=False, default=utcnow)
+    ended_at = Column(DateTime)
+    __table_args__ = (Index('one_active_outing_per_pet', 'pet_id', unique=True,
+                           sqlite_where=text('ended_at IS NULL')) ,)
+
+
+class OutingObservation(Base):
+    __tablename__ = 'outing_observations'
+    observation_id = Column(Integer, ForeignKey('observations.id'), primary_key=True)
+    outing_id = Column(String, ForeignKey('outings.id'), nullable=False, index=True)
+
+
+class ObservationMedia(Base):
+    __tablename__ = 'observation_media'
+    observation_id = Column(Integer, ForeignKey('observations.id'), primary_key=True)
+    filename = Column(String, nullable=False)
+    sha256 = Column(String, nullable=False)
+    start_s = Column(Float, nullable=False)
+    end_s = Column(Float, nullable=False)
+    source_json = Column(Text, nullable=False)
 
 
 def init_db():

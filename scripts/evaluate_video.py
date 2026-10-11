@@ -3,6 +3,7 @@ import argparse
 from pathlib import Path
 
 from pet_monitor.video import analyze_video
+from pet_monitor.temporal_candidates import diagnostics
 
 
 def main():
@@ -17,6 +18,7 @@ def main():
         raise SystemExit('Prepared video missing; run python -m scripts.prepare_davis first')
     result = analyze_video(folder / source['filename'])
     result['source'] = source
+    result['quality_diagnostics'] = diagnostics(result)
     Path(args.report).write_text(json.dumps(result, indent=2), encoding='utf-8')
     print(json.dumps({key: value for key, value in result.items() if key not in {'points', 'predictions', 'source'}}, ensure_ascii=False))
 
