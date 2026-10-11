@@ -37,6 +37,11 @@ def test_explicit_consent_scope_review_and_original_deletion(client):
     assert client.get(prefix+'/audio?pet_id=dog-a').content == wav()
     player = client.get(prefix+'/player?pet_id=dog-a')
     assert player.status_code == 200 and '<audio controls' in player.text
+    segment = client.get(prefix+'/player?pet_id=dog-a&start_s=0&end_s=1')
+    assert segment.status_code == 200 and '#t=0,1' in segment.text
+    assert '정확한 발성 시작' in segment.text
+    assert client.get(prefix+'/player?pet_id=dog-a&start_s=0.5&end_s=1.5').status_code == 422
+    assert client.get(prefix+'/player?pet_id=dog-a&start_s=0').status_code == 422
     assert client.get(prefix+'/player?pet_id=other').status_code == 404
     review = client.post(prefix+'/review',json={'pet_id':'dog-a','label':'uncertain','note':'확인 어려움'}).json()
     assert review['review']['source'] == 'guardian_opinion'
@@ -112,3 +117,20 @@ def test_missing_audio_file_is_not_advertised_as_playable(client):
     moment = client.get('/outings/'+session+'/summary?pet_id=dog-a').json()['moments'][0]
     assert moment['audio_available'] is False and moment['audio_url'] is None
     assert '원본 파일이 없습니다' in moment['note']
+
+
+def test_public_demo_provenance_cannot_become_user_training_data(client):
+    url = '/audio-clips/upload?pet_id=demo-dog&store_consent=true&demo_source=ESC-50%2Fexample.wav'
+    assert client.post(url+'&training_consent=true',content=wav()).status_code == 422
+    result = client.post(url,content=wav())
+    assert result.status_code == 201
+    item = result.json()
+    assert item['analysis']['input_scope'] == 'public_demo'
+    assert 'ESC-50/example.wav' in item['source_note']
+    assert '공개 자료 시연: ESC-50/example.wav' in client.get(
+        '/audio-clips/'+item['id']+'/player?pet_id=demo-dog').text
+    review = client.post('/audio-clips/'+item['id']+'/review',
+                         json={'pet_id':'demo-dog','label':'uncertain','note':'example'}).json()
+    assert review['review']['source'] == 'demo_operator_opinion'
+    assert client.post('/audio-clips/'+item['id']+'/consent',
+                       json={'pet_id':'demo-dog','training_consent':True}).status_code == 422

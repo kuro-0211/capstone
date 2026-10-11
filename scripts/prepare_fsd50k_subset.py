@@ -8,6 +8,7 @@ import csv
 import hashlib
 import json
 import struct
+import time
 import zlib
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -19,18 +20,25 @@ import soundfile as sf
 ROOT = Path('artifacts/datasets/fsd50k')
 
 
-def prepare_metadata():
+def remaining_timeout(deadline, maximum=90):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError('FSD preparation exceeded its time budget')
+    return min(maximum, max(1, remaining))
+
+
+def prepare_metadata(deadline):
     ROOT.mkdir(parents=True,exist_ok=True)
     record_path = ROOT/'record.json'
     if not record_path.exists():
-        response = requests.get('https://zenodo.org/api/records/4060432',timeout=60)
+        response = requests.get('https://zenodo.org/api/records/4060432',timeout=remaining_timeout(deadline,60))
         response.raise_for_status(); record_path.write_text(json.dumps(response.json()),encoding='utf-8')
     record = json.loads(record_path.read_text(encoding='utf-8'))
     for item in record['files']:
         if item['key'] not in {'FSD50K.ground_truth.zip','FSD50K.metadata.zip','FSD50K.doc.zip'}: continue
         path = ROOT/item['key']
         if not path.exists():
-            response = requests.get(item['links']['self'],timeout=90); response.raise_for_status()
+            response = requests.get(item['links']['self'],timeout=remaining_timeout(deadline)); response.raise_for_status()
             path.write_bytes(response.content)
         algorithm,digest = item['checksum'].split(':')
         if hashlib.new(algorithm,path.read_bytes()).hexdigest() != digest:
@@ -43,8 +51,9 @@ def prepare_metadata():
 
 
 class SplitZip:
-    def __init__(self, files):
+    def __init__(self, files, deadline):
         self.files = files
+        self.deadline = deadline
         self.starts = [0]
         for item in files: self.starts.append(self.starts[-1]+item['size'])
         last = files[-1]
@@ -76,11 +85,12 @@ class SplitZip:
             url = self.files[disk]['links']['self']
             # Unique range query avoids intermediaries reusing a response for another Range.
             with requests.get(url+f'?range={local}-{local+length-1}',headers={'Range':f'bytes={local}-{local+length-1}'},
-                              timeout=90,stream=True) as response:
+                              timeout=remaining_timeout(self.deadline),stream=True) as response:
                 if response.status_code != 206 or response.headers.get('Content-Range') != expected:
                     raise ValueError('server did not honor bounded range')
                 content = response.raw.read(length+1)
                 if len(content) != length: raise ValueError('truncated or oversized range')
+                remaining_timeout(self.deadline)
             chunks.append(content); offset += length; count -= length
         return b''.join(chunks)
 
@@ -102,27 +112,35 @@ class SplitZip:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--split',choices=['dev','eval'],default='eval')
+    parser.add_argument('--official-partition', choices=['train', 'val'],
+                        help='For dev, select only the official train or val partition')
     parser.add_argument('--per-class',type=int,default=60)
     args = parser.parse_args()
-    if not 1 <= args.per_class <= 500: raise ValueError('per-class must be 1..500')
+    if not 1 <= args.per_class <= 300: raise ValueError('per-class must be 1..300 (600 clips total)')
+    deadline = time.monotonic() + 90 * 60
     split = args.split
-    record = prepare_metadata()
+    if split == 'eval' and args.official_partition:
+        parser.error('--official-partition applies only to dev')
+    record = prepare_metadata(deadline)
     metadata = json.loads((ROOT/f'FSD50K.metadata/{split}_clips_info_FSD50K.json').read_text(encoding='utf-8'))
     rows = list(csv.DictReader((ROOT/f'FSD50K.ground_truth/{split}.csv').open(encoding='utf-8')))
     esc = json.loads(Path('artifacts/datasets/esc50/manifest.json').read_text())
     excluded_ids = {r['src_file'] for r in esc['records']+esc['excluded']}
     rows = [r for r in rows if r['fname'] not in excluded_ids and
             any(x in metadata[r['fname']]['license'] for x in ('/by/','/zero/'))]
-    if split == 'dev': rows = [r for r in rows if r['split']=='train']
+    if split == 'dev':
+        rows = [r for r in rows if r['split']==(args.official_partition or 'train')]
     positive = [r for r in rows if 'Dog' in r['labels'].split(',')]
     negative = [r for r in rows if 'Animal' not in r['labels'].split(',') and 'Dog' not in r['labels'].split(',')]
     order = lambda r:hashlib.sha256(('petmind-fsd-v1:'+r['fname']).encode()).hexdigest()
     selected = sorted(positive,key=order)[:args.per_class]+sorted(negative,key=order)[:args.per_class]
     files = [f for f in record['files'] if f['key'].startswith(f'FSD50K.{split}_audio.')]
     files.sort(key=lambda f:(f['key'].endswith('.zip'),f['key']))
-    archive = SplitZip(files)
-    output = ROOT/f'{split}_subset'; output.mkdir(exist_ok=True)
+    archive = SplitZip(files, deadline)
+    output_name = 'dev_val_subset' if args.official_partition == 'val' else f'{split}_subset'
+    output = ROOT/output_name; output.mkdir(exist_ok=True)
     def acquire(row):
+        remaining_timeout(deadline)
         name = row['fname']+'.wav'; path = output/name
         if not path.exists():
             content = archive.extract(f'FSD50K.{split}_audio/{name}')

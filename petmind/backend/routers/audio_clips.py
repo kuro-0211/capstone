@@ -67,10 +67,11 @@ def to_out(row):
             'expires_at': row.expires_at.isoformat()+'Z', 'deleted': row.deleted_at is not None,
             'analysis': analysis, 'review': review, 'verified': row.verified_at is not None,
             'review_priority': reason, 'audio_available': row.deleted_at is None,
-            'source_note': '사용자 업로드 음원; 소리 발생 위치·감정은 자동 확정하지 않습니다.'}
+            'source_note': ('공개 자료 시연: '+analysis['demo_source'] if analysis.get('demo_source') else
+                            '사용자 업로드 음원')+'; 소리 발생 위치·감정은 자동 확정하지 않습니다.'}
 
 
-def store_clip(db, content, pet_id, training_consent, retention_days, outing_id):
+def store_clip(db, content, pet_id, training_consent, retention_days, outing_id, demo_source=None):
     try:
         info = sf.info(io.BytesIO(content))
         if info.format != 'WAV' or info.duration <= 0 or info.duration > 30 or info.channels > 2:
@@ -88,7 +89,9 @@ def store_clip(db, content, pet_id, training_consent, retention_days, outing_id)
         from pet_monitor.audio import analyze_wav
         analysis = analyze_wav(path)
         # Candidate score integration is separate from energy-event counts.
-        analysis['input_scope'] = 'user_upload'
+        analysis['input_scope'] = 'public_demo' if demo_source else 'user_upload'
+        if demo_source:
+            analysis['demo_source'] = demo_source
         checkpoint = ROOT/'artifacts/audio_lstm/esc50_lstm.pt'
         if checkpoint.exists():
             from pet_monitor.audio_model_cache import get_audio_predictor
@@ -103,7 +106,7 @@ def store_clip(db, content, pet_id, training_consent, retention_days, outing_id)
         else:
             analysis['model_status'] = 'experimental_model_not_prepared'
         context = analysis['context']
-        context['input_note'] = '사용자 업로드 음원; 에너지 기반 짖음 후보, 실제 짖음 여부는 보호자 확인 필요'
+        context['input_note'] = ('공개 자료 시연' if demo_source else '사용자 업로드 음원') + '; 에너지 기반 짖음 후보, 실제 짖음 여부는 보호자 확인 필요'
         observation = save(db, ObservationIn(pet_id=pet_id, session_id='audio-'+clip_id,
             observed_at=utcnow().isoformat()+'Z', source='user_audio', context=context, outing_id=outing_id), commit=False)
         row = AudioClipLog(id=clip_id, pet_id=pet_id, observation_id=observation.id, filename=path.name,
@@ -122,16 +125,20 @@ def store_clip(db, content, pet_id, training_consent, retention_days, outing_id)
 async def upload(request: Request, pet_id: str = Query(min_length=1,max_length=80),
                  store_consent: bool = False, training_consent: bool = False,
                  retention_days: int = Query(default=7,ge=1,le=30), outing_id: str | None = None,
+                 demo_source: str | None = Query(default=None, min_length=5, max_length=200),
                  db=Depends(get_db)):
     if not store_consent:
         raise HTTPException(422, '개인 기록 저장 동의가 필요합니다. 모델 학습 참여는 별도 선택입니다.')
+    if demo_source and training_consent:
+        raise HTTPException(422, '공개 시연 음원은 사용자 학습 참여 자료로 등록할 수 없습니다.')
     content = bytearray()
     async for chunk in request.stream():
         content.extend(chunk)
         if len(content) > MAX_BYTES:
             raise HTTPException(413, '파일은 12MB 이하여야 합니다.')
     purge_expired(db)
-    return await run_in_threadpool(store_clip, db, bytes(content), pet_id, training_consent, retention_days, outing_id)
+    return await run_in_threadpool(store_clip, db, bytes(content), pet_id, training_consent,
+                                   retention_days, outing_id, demo_source)
 
 
 @router.get('')
@@ -170,17 +177,32 @@ def audio(clip_id: str, pet_id: str, db=Depends(get_db)):
 
 
 @router.get('/{clip_id}/player', response_class=HTMLResponse)
-def player(clip_id: str, pet_id: str, db=Depends(get_db)):
+def player(clip_id: str, pet_id: str, start_s: float | None = Query(default=None, ge=0),
+           end_s: float | None = Query(default=None, gt=0), db=Depends(get_db)):
     row = require_clip(db,clip_id,pet_id)
     if row.deleted_at or not path_for(row).is_file():
         raise HTTPException(410, '원본이 삭제되었거나 보관 기간이 지났습니다.')
+    if (start_s is None) != (end_s is None) or (start_s is not None and
+            (end_s <= start_s or end_s > row.duration_s + .01)):
+        raise HTTPException(422, '원본 길이 안의 시작·종료 시각을 함께 지정해 주세요.')
     src = f'/audio-clips/{quote(clip_id,safe="")}/audio?pet_id={quote(pet_id,safe="")}'
+    analysis = json.loads(row.analysis_json)
+    source_title = ('공개 자료 시연: '+html.escape(analysis['demo_source']) if analysis.get('demo_source')
+                    else '사용자 업로드 음원')
+    fragment = f'#t={start_s:g},{end_s:g}' if start_s is not None else ''
+    segment_note = (f'<p>분석 구간 {start_s:g}~{end_s:g}초 · 5초 분석 창이며 '
+                    '정확한 발성 시작·종료 시각은 아닙니다.</p>') if start_s is not None else ''
+    stop_script = (f'''<script>const player=document.querySelector('audio');
+player.addEventListener('loadedmetadata',()=>{{player.currentTime={start_s:g};}});
+player.addEventListener('timeupdate',()=>{{if(player.currentTime>={end_s:g})player.pause();}});
+</script>''') if start_s is not None else ''
     return HTMLResponse(f'''<!doctype html><html lang="ko"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PetMind 음원 근거</title><style>body{{background:#101018;color:#eee;font:18px sans-serif;padding:20px}}audio{{width:100%}}</style>
 <h2>관찰 #{row.observation_id} · 원본 음원</h2>
-<audio controls preload="metadata" src="{html.escape(src,quote=True)}"></audio>
-<p>사용자 업로드 음원 · {row.duration_s:g}초</p><p>소리의 발생 위치와 감정은 자동 확정하지 않습니다.</p>
+<audio controls preload="metadata" src="{html.escape(src+fragment,quote=True)}"></audio>
+<p>{source_title} · {row.duration_s:g}초</p>{segment_note}<p>소리의 발생 위치와 감정은 자동 확정하지 않습니다.</p>
+{stop_script}
 </html>''',headers={'Cache-Control':'no-store'})
 
 
@@ -193,7 +215,9 @@ class Review(StrictModel):
 @router.post('/{clip_id}/review')
 def review(clip_id: str, data: Review, db=Depends(get_db)):
     row = require_clip(db,clip_id,data.pet_id)
-    row.review_json = json.dumps({'label':data.label,'note':data.note,'source':'guardian_opinion',
+    is_demo = bool(json.loads(row.analysis_json).get('demo_source'))
+    row.review_json = json.dumps({'label':data.label,'note':data.note,
+                                  'source':'demo_operator_opinion' if is_demo else 'guardian_opinion',
                                   'updated_at':utcnow().isoformat()+'Z'},ensure_ascii=False)
     row.verified_at = None  # A changed opinion must be independently rechecked before training.
     db.commit()
@@ -210,6 +234,8 @@ def consent(clip_id: str, data: Consent, db=Depends(get_db)):
     row = require_clip(db,clip_id,data.pet_id)
     if row.deleted_at and data.training_consent:
         raise HTTPException(410, '삭제된 원본은 학습에 제공할 수 없습니다.')
+    if data.training_consent and json.loads(row.analysis_json).get('demo_source'):
+        raise HTTPException(422, '공개 시연 음원은 사용자 학습 참여 자료로 등록할 수 없습니다.')
     row.training_consent = int(data.training_consent)
     row.verified_at = None
     db.commit()

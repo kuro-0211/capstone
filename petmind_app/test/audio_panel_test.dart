@@ -23,7 +23,8 @@ void main() {
       }
       return http.Response(jsonEncode([{'id':'clip','observation_id':4,'duration_s':5,
         'training_consent':consent,'expires_at':'2026-10-18','deleted':false,'audio_available':true,
-        'review_priority':'uncertain','analysis':{},'review':review}]),200,
+        'review_priority':'uncertain','analysis':{'audio_lstm':{'dog_score':0.8,'threshold':0.5,
+          'windows':[{'start_s':0,'end_s':5,'dog_score':0.8,'label':'dog_candidate'}]}},'review':review}]),200,
         headers:{'content-type':'application/json; charset=utf-8'});
     });
     await tester.pumpWidget(MaterialApp(home:Scaffold(body:SingleChildScrollView(child:AudioPanel(
@@ -31,8 +32,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('사용자 음원 · 보호자 확인'));
     await tester.pumpAndSettle();
+    expect(find.textContaining('5초 창은 정확한 발성'),findsOneWidget);
+    expect(find.text('구간 듣기'),findsOneWidget);
     final boxes = tester.widgetList<CheckboxListTile>(find.byType(CheckboxListTile)).toList();
-    expect(boxes[0].value,false); expect(boxes[1].value,false); expect(boxes[1].onChanged,isNull);
+    expect(boxes[0].value,false); expect(boxes[1].value,false);
+    expect(boxes[2].value,false); expect(boxes[2].onChanged,isNull);
     await tester.tap(find.text('개인 관찰 기록으로 음원 저장에 동의'));
     await tester.pumpAndSettle();
     expect(tester.widgetList<CheckboxListTile>(find.byType(CheckboxListTile)).last.onChanged,isNotNull);
@@ -46,5 +50,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(consent,false);
     expect(find.text('학습 참여 철회'),findsNothing);
+    await tester.tap(find.text('공개 자료 시연용 음원'));
+    await tester.pumpAndSettle();
+    expect(find.text('시연용 기록으로 음원 저장에 동의'), findsOneWidget);
   });
 }

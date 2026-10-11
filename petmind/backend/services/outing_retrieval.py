@@ -31,6 +31,10 @@ def select_facts(facts, question, limit=8):
     requested = question_intents(question)
     if not requested:
         return []
+    normalized_question = unicodedata.normalize('NFKC', question).lower()
+    if '보호자' in normalized_question:
+        facts = [fact for fact in facts if fact['kind'] != 'guardian_opinion' or
+                 fact.get('review_source', 'guardian_opinion') == 'guardian_opinion']
     kinds = list(requested)
     if 'summary' in kinds:
         kinds += ['quality', 'bark', 'guardian_opinion', 'observation']

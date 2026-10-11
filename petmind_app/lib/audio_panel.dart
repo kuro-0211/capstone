@@ -23,6 +23,8 @@ class _AudioPanelState extends State<AudioPanel> {
   Uint8List? bytes;
   String filename = '', error = '';
   bool store = false, training = false, busy = false;
+  bool publicDemo = false;
+  String publicSource = '';
   int retention = 7, epoch = 0;
   String get petQuery => 'pet_id=${Uri.encodeQueryComponent(widget.petId)}';
   @override
@@ -31,7 +33,7 @@ class _AudioPanelState extends State<AudioPanel> {
   void didUpdateWidget(covariant AudioPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.petId != widget.petId) {
-      epoch++; clips = []; reviewQueue = []; queueOnly = false; bytes = null; filename = ''; store = false; training = false; error = '';
+      epoch++; clips = []; reviewQueue = []; queueOnly = false; bytes = null; filename = ''; store = false; training = false; error = ''; publicDemo = false; publicSource = '';
       load();
     }
   }
@@ -71,8 +73,12 @@ class _AudioPanelState extends State<AudioPanel> {
     final pet = widget.petId;
     final allowed = widget.outing == null || widget.outing!['input_mode'] == 'uploaded_audio';
     if (!allowed) { setState(() => error = '기존 외출을 종료하고 사용자 음원 모드로 시작해 주세요.'); return; }
+    if (publicDemo && publicSource.trim().length < 5) {
+      setState(() => error = '공개 음원의 데이터셋·파일명을 5자 이상 적어 주세요.'); return;
+    }
     final query = '$petQuery&store_consent=$store&training_consent=$training&retention_days=$retention'
-      '${widget.outing == null ? '' : '&outing_id=${widget.outing!['id']}'}';
+      '${widget.outing == null ? '' : '&outing_id=${widget.outing!['id']}'}'
+      '${publicDemo ? '&demo_source=${Uri.encodeQueryComponent(publicSource.trim())}' : ''}';
     final content = bytes!;
     await run(() async {
       decode(await widget.client.post(Uri.parse('${widget.base}/audio-clips/upload?$query'),
@@ -94,14 +100,17 @@ class _AudioPanelState extends State<AudioPanel> {
             DropdownMenuItem(value:'uncertain',child:Text('판단하기 어려움')),
           ],onChanged:(value) => update(() => label = value!)),
           TextFormField(initialValue:note,onChanged:(value) => note = value,maxLength:1000,decoration:const InputDecoration(labelText:'상황 메모')),
-          const Text('보호자 의견으로 저장됩니다. 모델의 확정 정답이나 감정 진단이 아닙니다.'),
+          Text(item['analysis']?['demo_source'] == null
+            ? '보호자 의견으로 저장됩니다. 모델의 확정 정답이나 감정 진단이 아닙니다.'
+            : '공개 자료 시연 담당자 의견으로 저장됩니다. 실제 보호자 확인이나 모델 정답이 아닙니다.'),
         ])), actions: [TextButton(onPressed:() => Navigator.pop(context),child:const Text('취소')),
           FilledButton(onPressed:() => Navigator.pop(context,{'pet_id':pet,'label':label,'note':note}),child:const Text('의견 저장'))])));
     if (result != null && mounted && pet == widget.petId) await run(() => post('/audio-clips/${item['id']}/review',result));
   }
-  void play(Map<String,dynamic> item) {
+  void play(Map<String,dynamic> item, [double? start, double? end]) {
+    final segment = start == null || end == null ? '' : '&start_s=$start&end_s=$end';
     showDialog<void>(context:context,builder:(context) => AlertDialog(title:const Text('원본 음원 확인'),
-      content:SizedBox(width:650,height:260,child:clipView('${widget.base}/audio-clips/${item['id']}/player?$petQuery')),
+      content:SizedBox(width:650,height:300,child:clipView('${widget.base}/audio-clips/${item['id']}/player?$petQuery$segment')),
       actions:[TextButton(onPressed:() => Navigator.pop(context),child:const Text('닫기'))]));
   }
   @override
@@ -111,9 +120,14 @@ class _AudioPanelState extends State<AudioPanel> {
       audioInput((name,data) { if (mounted) setState(() { filename = name; bytes = data; }); },
         (message) { if (mounted) setState(() => error = message); }),
       if (filename.isNotEmpty) Text('선택: $filename'),
+      CheckboxListTile(value: publicDemo, onChanged: busy ? null : (v) => setState(() { publicDemo = v!; if (publicDemo) training = false; }),
+        title: const Text('공개 자료 시연용 음원')),
+      if (publicDemo) TextField(onChanged: (v) => publicSource = v,
+        decoration: const InputDecoration(labelText: '출처 · 데이터셋/파일명', hintText: '예: ESC-50 / 1-100032-A-0.wav')),
+      if (publicDemo) const Text('시연 자료이며 실제 반려견의 장기 관찰이나 모델 학습 정답으로 사용하지 않습니다.'),
       CheckboxListTile(value:store,onChanged:busy ? null : (v) => setState(() { store = v!; if (!store) training = false; }),
-        title:const Text('개인 관찰 기록으로 음원 저장에 동의')),
-      CheckboxListTile(value:training,onChanged:busy || !store ? null : (v) => setState(() => training = v!),
+        title:Text(publicDemo ? '시연용 기록으로 음원 저장에 동의' : '개인 관찰 기록으로 음원 저장에 동의')),
+      CheckboxListTile(value:training,onChanged:busy || !store || publicDemo ? null : (v) => setState(() => training = v!),
         title:const Text('검수 후 공통 모델 개선에 제공 (선택)')),
       DropdownButton<int>(value:retention,items:[1,7,30].map((n) => DropdownMenuItem(value:n,child:Text('원본 보관 $n일'))).toList(),
         onChanged:busy ? null : (v) => setState(() => retention = v!)),
@@ -130,11 +144,28 @@ class _AudioPanelState extends State<AudioPanel> {
         final model = item['analysis']?['audio_lstm'];
         return Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
           Text('관찰 #${item['observation_id']} · ${item['duration_s']}초'),
+          Text(item['source_note'] ?? '출처 정보 없음'),
           Text(item['review_priority'] == 'model_disagreement' ? '확인 권장: 모델과 에너지 감지 결과가 다릅니다.' :
             item['review_priority'] == 'uncertain' ? '확인 권장: 판별 근거가 부족합니다.' : '일반 구간 확인 표본'),
           if (model != null) Text('실험 LSTM 개 소리 점수 ${model['dog_score']} · 기준 ${model['threshold']} (정확도·확률 아님)'),
+          if (model?['windows'] is List && (model['windows'] as List).isNotEmpty) ...[
+            const Text('음원 분석 구간 · 5초 창은 정확한 발성 시작·종료 시각이 아닙니다.'),
+            for (final rawWindow in model['windows']) Builder(builder: (context) {
+              final window = Map<String,dynamic>.from(rawWindow);
+              final start = (window['start_s'] as num).toDouble();
+              final end = (window['end_s'] as num).toDouble();
+              return ListTile(
+                dense: true,
+                title: Text('${start.toStringAsFixed(1)}~${end.toStringAsFixed(1)}초 · ${window['label'] == 'dog_candidate' ? '개 소리 후보' : '기타 소리 후보'}'),
+                subtitle: Text('모델 점수 ${((window['dog_score'] as num) * 100).toStringAsFixed(1)} / 100 · '
+                  '${item['analysis']?['demo_source'] == null ? '보호자' : '시연 담당자'} 확인 ${item['review']?['label'] == null ? '전' : '의견 있음'}'),
+                trailing: TextButton(onPressed: item['audio_available'] == true ? () => play(item, start, end) : null,
+                  child: const Text('구간 듣기')),
+              );
+            }),
+          ],
           if (model == null) const Text('실험 음성 모델이 준비되지 않았거나 분석에 실패했습니다. 에너지 후보만 기록했습니다.'),
-          if ((item['review'] as Map).isNotEmpty) Text('보호자 의견: ${item['review']['label']} · ${item['review']['note']}'),
+          if ((item['review'] as Map).isNotEmpty) Text('${item['review']['source'] == 'demo_operator_opinion' ? '시연 담당자 의견' : '보호자 의견'}: ${item['review']['label']} · ${item['review']['note']}'),
           Text('학습 참여 ${item['training_consent'] == true ? '동의' : '미동의'} · 원본 만료 ${item['expires_at']}'),
           Wrap(spacing:8,children:[
             TextButton(onPressed:item['audio_available'] == true ? () => play(item) : null,child:Text(item['deleted'] == true ? '원본 삭제됨' : '음원 듣기')),

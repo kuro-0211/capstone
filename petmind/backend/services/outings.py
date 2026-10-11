@@ -171,8 +171,9 @@ def summary_facts(current, scope='이번 외출에 연결된'):
             labels = {'pet_vocalization': '반려견 소리', 'external_or_tv': 'TV·외부 소리',
                       'other': '기타 소리', 'uncertain': '판단 어려움'}
             facts.append({'id': f"guardian.{item['observation_id']}",
-                'text': f"관찰 #{item['observation_id']} 보호자 의견: {labels[review['label']]}. {review.get('note', '')}",
-                'observation_ids': [item['observation_id']], 'kind': 'guardian_opinion'})
+                'text': f"관찰 #{item['observation_id']} {'시연 담당자 의견' if review.get('source') == 'demo_operator_opinion' else '보호자 의견'}: {labels[review['label']]}. {review.get('note', '')}",
+                'observation_ids': [item['observation_id']], 'kind': 'guardian_opinion',
+                'review_source': review.get('source', 'guardian_opinion')})
     return facts
 
 

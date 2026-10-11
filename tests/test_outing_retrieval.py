@@ -17,6 +17,15 @@ def test_unrelated_question_cannot_be_activated_by_note_instruction():
     assert select_facts(facts, '보호자 의견', limit=0) == []
 
 
+def test_public_demo_operator_note_is_not_a_guardian_confirmation():
+    facts = [{'id': 'demo', 'kind': 'guardian_opinion',
+              'review_source': 'demo_operator_opinion', 'text': '시연 담당자 의견: TV 아님'},
+             {'id': 'guardian', 'kind': 'guardian_opinion',
+              'review_source': 'guardian_opinion', 'text': '보호자 의견: TV 소리'}]
+    assert [f['id'] for f in select_facts(facts, '보호자가 TV라고 확인한 것은?')] == ['guardian']
+    assert select_facts(facts[:1], '보호자가 TV라고 확인한 것은?') == []
+
+
 def test_question_normalization_and_sound_uncertainty():
     facts = [{'id': 'b', 'kind': 'bark'}, {'id': 'q', 'kind': 'quality'},
              {'id': 'g', 'kind': 'guardian_opinion'}, {'id': 's', 'kind': 'summary'}]
