@@ -179,7 +179,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> demo(String scenario) async {
     if (activeOuting != null && activeOuting!['input_mode'] != 'synthetic_demo') {
-      setState(() => notice = '진행 중 외출은 준비된 영상 모드입니다. 공개 입력을 사용하거나 외출을 종료해 주세요.');
+      setState(() => notice = '진행 중 외출은 ${_inputModeName(activeOuting!['input_mode'])} 모드입니다. 합성 시연을 사용하려면 외출을 종료해 주세요.');
       return;
     }
     await _run(() async {
@@ -204,7 +204,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> analyzePublicMedia() async {
     if (audioFilename == null) return;
     if (activeOuting != null && activeOuting!['input_mode'] != 'prepared_video') {
-      setState(() => notice = '진행 중 외출은 합성 시연 모드입니다. 시연 입력을 사용하거나 외출을 종료해 주세요.');
+      setState(() => notice = '진행 중 외출은 ${_inputModeName(activeOuting!['input_mode'])} 모드입니다. 준비된 영상·음원을 사용하려면 외출을 종료해 주세요.');
       return;
     }
     await _run(() async {
@@ -708,6 +708,13 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   String _actionName(String value) => value == 'music' ? '가상 음악 실행' : value;
+
+  String _inputModeName(dynamic value) => const {
+    'uploaded_audio': '사용자 음원',
+    'prepared_video': '준비된 영상·음원',
+    'synthetic_demo': '합성 시연',
+    'live': '실시간 입력',
+  }[value] ?? '알 수 없는 입력';
 
   String _providerName(dynamic value) {
     final name = value?.toString() ?? '';

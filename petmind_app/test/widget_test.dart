@@ -9,6 +9,38 @@ import 'package:petmind_app/main.dart';
 import 'package:petmind_app/genesis_theme.dart';
 
 void main() {
+  testWidgets('audio outing reports its actual mode when another input is chosen', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var sentScenario = false;
+    final client = MockClient((request) async {
+      final path = request.url.path;
+      if (request.method == 'POST' && path == '/demo/observe') sentScenario = true;
+      final dynamic result = path == '/outings'
+        ? [{'id': 'audio-active', 'status': 'active', 'input_mode': 'uploaded_audio',
+            'input_note': '사용자 음원', 'started_at': '2026-10-11T08:00:00Z'}]
+        : path.endsWith('/summary') || path == '/outings/day'
+        ? {'moments': [], 'sample_seconds': 0, 'unknown_seconds': 0,
+            'bark_candidate_count': 0}
+        : path == '/audio-clips/review-queue' ? {'items': []}
+        : path == '/care/latest' || path.endsWith('/profile') ? null
+        : path == '/metrics' || path == '/media/catalog' ? {} : [];
+      return http.Response(jsonEncode(result), 200,
+        headers: {'content-type': 'application/json; charset=utf-8'});
+    });
+    await tester.pumpWidget(MaterialApp(home: DashboardPage(client: client)));
+    await tester.pumpAndSettle();
+    final scenario = find.text('휴식 시연');
+    await tester.ensureVisible(scenario);
+    await tester.tap(scenario);
+    await tester.pumpAndSettle();
+    expect(sentScenario, isFalse);
+    expect(find.textContaining('진행 중 외출은 사용자 음원 모드입니다'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('server outage shows a retry path and recovers', (tester) async {
     var online = false;
     final client = MockClient((request) async {
