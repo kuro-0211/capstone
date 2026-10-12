@@ -193,7 +193,7 @@ void main() {
         petId: 'demo-dog', onActiveChanged: (_) {})))));
     await tester.pumpAndSettle();
     expect(find.text('분석 표본'), findsOneWidget);
-    expect(find.text('에너지 기반 소리 후보'), findsOneWidget);
+    expect(find.text('에너지 기반 소리 후보'), findsNothing);
     expect(find.text('음성 LSTM 개 짖음 소리 후보'), findsOneWidget);
     expect(find.text('5초'), findsWidgets);
     expect(find.textContaining('외출 기록은 표시 중'), findsOneWidget);

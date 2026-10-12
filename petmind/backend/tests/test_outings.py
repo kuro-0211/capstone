@@ -68,7 +68,10 @@ def test_energy_candidates_and_lstm_windows_are_separate_metrics(client):
     assert report['lstm_dog_window_count'] == 1
     assert report['lstm_unavailable_seconds'] == 0
     claims = client.post(f'/outings/{oid}/explain', json={'pet_id': 'dog-a'}).json()['claims']
-    assert '에너지 기반' in next(c['text'] for c in claims if c['id'] == 'current.bark')
+    assert not any(c['id'] == 'current.bark' for c in claims)
+    assert any(c['id'] == 'current.audio_lstm' and '1개' in c['text'] for c in claims)
+    assert '소리 크기 변화' not in report['moments'][0]['summary']
+    assert '개 짖음 소리 후보 1개' in report['moments'][0]['summary']
     model_claims = client.post(f'/outings/{oid}/explain', json={
         'pet_id': 'dog-a', 'question': 'LSTM 개 소리 후보 창은 몇 개야?'}).json()['claims']
     assert any(c['id'] == 'current.audio_lstm' and '1개' in c['text'] for c in model_claims)

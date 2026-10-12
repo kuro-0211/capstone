@@ -65,12 +65,25 @@ def moment(db, row, related=None):
     if event:
         media_available = media_available and available(db, media)
     audio_analysis = json.loads(audio.analysis_json) if audio else {}
+    audio_model = audio_analysis.get('audio_model') or audio_analysis.get('audio_lstm') or {}
+    from pet_monitor.event_video import candidate_windows
+    model_windows = audio_model.get('windows') or []
+    model_candidates = len(candidate_windows(audio_analysis)) if audio_model else 0
+    if audio_model and model_windows:
+        display_summary = (f"{float(json.loads(row.context_json)['window_s']):g}초 음성 관찰: "
+                           f"{audio_model.get('model_name', '음성 모델')} 분석 창 {len(model_windows)}개 중 "
+                           f"개 짖음 소리 후보 {model_candidates}개. 5초 창은 짖음 횟수가 아닙니다.")
+    elif audio:
+        display_summary = (f"{float(json.loads(row.context_json)['window_s']):g}초 음성 관찰: "
+                           '음성 모델 판별 결과가 없습니다. 소리 크기 변화만으로 짖음을 판단할 수 없습니다.')
+    else:
+        display_summary = row.summary
     event_info = event or audio_analysis.get('event_video')
     if event_info and not media_available and event_info['status'] in {'ready','partial'}:
         event_info = {**event_info, 'status':'missing_or_expired'}
     event_labels = {'pending':'영상 확보 대기', 'ready':'감지 전후 영상 연결', 'partial':'일부 구간 미확보',
                     'missing':'영상 확보 실패', 'missing_or_expired':'원본 누락·만료', 'deleted':'원본 삭제',
-                    'not_triggered':'음성 LSTM 후보 없음', 'model_unavailable':'음성 모델 미준비·실패'}
+                    'not_triggered':'음성 모델 후보 없음', 'model_unavailable':'음성 모델 미준비·실패'}
     event_note = None
     if event_info:
         event_note = event_labels.get(event_info['status'],event_info['status'])
@@ -81,10 +94,12 @@ def moment(db, row, related=None):
                            and exists(AUDIO_ROOT, audio.filename))
     data = json.loads(row.context_json)
     return {'observation_id': row.id, 'observed_at': row.observed_at.isoformat() + 'Z',
-            'source': row.source, 'input_scope': input_scope(row, audio), 'summary': row.summary,
+            'source': row.source, 'input_scope': input_scope(row, audio), 'summary': display_summary,
             'reason': event_labels.get(event_info['status'],'음성 관찰') if event_info else
                       '반복 움직임 후보' if data['motion']['dominant'] in {'pacing', 'spinning'} else
-                      '짖음 후보' if data['bark']['count'] else
+                      ('개 짖음 소리 후보' if model_candidates else '음성 모델 후보 없음') if audio_model and model_windows else
+                      '소리 크기 변화 · 판별 불가' if audio else
+                      '소리 크기 변화 · 판별 불가' if data['bark']['count'] else
                       '영상 판단 불가' if data['motion']['dominant'] == 'unknown' else '관찰 근거',
             'media_available': media_available,
             'event_video': event_info,
@@ -121,7 +136,7 @@ def aggregate(db, rows, clip_start=None, clip_end=None):
             select(AudioClipLog).where(AudioClipLog.observation_id.in_(chunk))))
     kept, skipped, boundaries, count, seconds = [], [], [], 0, 0.0
     lstm_windows, lstm_dog_windows, lstm_unavailable_seconds = 0, 0, 0.0
-    demo_ids, demo_seconds, scopes = [], 0.0, set()
+    demo_ids, demo_seconds, scopes, model_names = [], 0.0, set(), set()
     for row in rows:
         data = json.loads(row.context_json)
         window = float(data['window_s'])
@@ -170,9 +185,10 @@ def aggregate(db, rows, clip_start=None, clip_end=None):
         count += data['bark']['count']
         if audio:
             analysis = json.loads(audio.analysis_json)
-            model = analysis.get('audio_lstm')
+            model = analysis.get('audio_model') or analysis.get('audio_lstm')
             if model:
                 from pet_monitor.event_video import candidate_windows
+                model_names.add(model.get('model_name', 'LSTM'))
                 lstm_windows += len(model.get('windows', []))
                 lstm_dog_windows += len(candidate_windows(analysis))
             else:
@@ -205,6 +221,9 @@ def aggregate(db, rows, clip_start=None, clip_end=None):
             'lstm_analyzed_window_count': lstm_windows,
             'lstm_dog_window_count': lstm_dog_windows,
             'lstm_unavailable_seconds': round(lstm_unavailable_seconds, 3),
+            'audio_model_name': next(iter(model_names)) if len(model_names) == 1 else
+                                '혼합 음성 모델' if model_names else
+                                'YAMNet Bark' if settings.audio_detector == 'yamnet' else 'LSTM',
             'bark_candidates_per_minute': round(count*60/seconds, 3) if seconds else None,
             'sources': sorted({r.source for r in kept}), 'moments': moments,
             'measurement_note': '저장 구간 집계입니다. 중복·부분 겹침 구간은 전체 제외하며 전체 외출 활동량으로 추정하지 않습니다.'}
@@ -226,11 +245,13 @@ def summary_facts(current, scope='이번 외출에 연결된'):
               'observation_ids': ids, 'kind': 'summary'},
              {'id': 'current.unknown', 'text': '카메라는 원본 확인용이며 영상 행동 분석은 수행하지 않습니다.' if current.get('video_role') == 'evidence_only' else f"분석 표본 중 영상 판단 불가는 {current['unknown_seconds']:g}초입니다.",
               'observation_ids': ids, 'kind': 'quality'},
-             {'id': 'current.bark', 'text': f"중복 제외 저장 구간의 에너지 기반 짖음 후보는 {current['bark_candidate_count']}회입니다. 음성 LSTM의 개 짖음 소리 감지 창과 다른 지표입니다.",
-              'observation_ids': ids, 'kind': 'bark'}]
+             ]
     if current['lstm_analyzed_window_count'] or current['lstm_unavailable_seconds']:
         facts.append({'id': 'current.audio_lstm', 'kind': 'audio_lstm', 'observation_ids': ids,
-            'text': f"음성 LSTM이 분석한 창 {current['lstm_analyzed_window_count']}개 중 개 짖음 소리 후보 창은 {current['lstm_dog_window_count']}개입니다. 모델 미준비·실패 구간은 {current['lstm_unavailable_seconds']:g}초입니다. 5초 창은 정확한 발성 횟수가 아닙니다."})
+            'text': f"{current['audio_model_name']} 모델의 분석 창 {current['lstm_analyzed_window_count']}개 중 개 짖음 소리 후보 창은 {current['lstm_dog_window_count']}개입니다. 모델 미준비·실패 구간은 {current['lstm_unavailable_seconds']:g}초입니다. 5초 창은 정확한 발성 횟수가 아닙니다."})
+    else:
+        facts.append({'id': 'current.bark', 'kind': 'bark', 'observation_ids': ids,
+            'text': f"소리 크기 변화 구간 {current['bark_candidate_count']}개가 기록됐지만, 음성 모델 판별이 없어 개 짖음 소리인지 알 수 없습니다."})
     if current.get('unobserved_seconds') is not None:
         facts.append({'id': 'current.capture_gap', 'kind': 'quality', 'observation_ids': ids,
             'text': f"외출 시간 중 분석되지 않은 시간은 {current['unobserved_seconds']:g}초이며 조용했던 시간으로 해석할 수 없습니다."})
@@ -282,9 +303,9 @@ def facts_for_report(db, outing, question):
                   'insufficient_samples')
         comparison = {'status': status,
                       'previous_outing': outing_out(previous), 'previous_summary': old}
-        if comparable:
+        if comparable and not (current['lstm_analyzed_window_count'] or old['lstm_analyzed_window_count']):
             facts.append({'id': 'comparison.bark_rate', 'kind': 'comparison',
-                          'text': f"저장 구간의 분당 짖음 후보: 이번 {current['bark_candidates_per_minute']:g}회, 이전 {old['bark_candidates_per_minute']:g}회. 전체 외출이나 케어 효과를 비교한 수치는 아닙니다.",
+                          'text': f"저장 구간의 분당 소리 크기 변화: 이번 {current['bark_candidates_per_minute']:g}회, 이전 {old['bark_candidates_per_minute']:g}회. 짖음 횟수나 전체 외출 활동량은 아닙니다.",
                           'observation_ids': ids + old['counted_observation_ids']})
     lowered = unicodedata.normalize('NFKC', question).lower()
     if 'guardian_opinion' in question_intents(question) and any(

@@ -297,6 +297,7 @@ void main() {
         expect(jsonDecode(request.body)['observation_id'], 42);
         suggestion = {'id': 7, 'observation_id': 42, 'summary': '상태를 확인해 주세요.', 'severity': 'attention', 'status': 'pending',
           'provider': 'rule', 'reasons': ['반복 신호'], 'recommended_actions': ['music'],
+          'care_steps': ['전후 장면을 확인하고 주변 자극을 기록해 주세요.'],
           'cited_observation_ids': [3], 'retrieval': {'mode': 'mcp', 'status': 'ok',
              'records': [{'id': 3, 'summary': '과거 관찰', 'source': 'user_audio',
                'input_scope': 'public_demo', 'observed_at': '2026-10-10',
@@ -333,6 +334,8 @@ void main() {
     expect(find.textContaining('#3 · 과거 관찰'), findsOneWidget);
     expect(find.textContaining('기록 #3 시연 담당자 의견: 기타 소리'), findsOneWidget);
     expect(find.textContaining('공개·생성 시연 자료 · 2026-10-10'), findsOneWidget);
+    expect(find.text('보호자가 해볼 일'), findsOneWidget);
+    expect(find.textContaining('전후 장면을 확인하고 주변 자극을 기록'), findsOneWidget);
     final approval = find.text('가상 음악 실행 승인');
     await tester.ensureVisible(approval);
     await tester.tap(approval);

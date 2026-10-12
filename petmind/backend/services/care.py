@@ -22,11 +22,13 @@ from .query_plan import plan_query
 
 
 def suggestion_to_out(row):
+    retrieval = json.loads(row.retrieval_json)
     return {'id': row.id, 'pet_id': row.pet_id, 'observation_id': row.observation_id,
             'state': row.state, 'summary': row.summary, 'reasons': json.loads(row.reasons_json),
             'recommended_actions': json.loads(row.recommended_actions_json), 'music_style': row.music_style,
             'severity': row.severity, 'status': row.status, 'provider': row.provider,
-            'context': json.loads(row.context_json), 'retrieval': json.loads(row.retrieval_json),
+            'context': json.loads(row.context_json), 'retrieval': retrieval,
+            'care_steps': retrieval.get('care_steps', []),
             'cited_observation_ids': json.loads(row.cited_ids_json), 'question': row.question,
             'created_at': row.created_at.isoformat() + 'Z'}
 
@@ -44,7 +46,7 @@ def current_audio_evidence(db, observation_id):
     if clip is None:
         return None
     analysis = json.loads(clip.analysis_json)
-    model = analysis.get('audio_lstm') or {}
+    model = analysis.get('audio_model') or analysis.get('audio_lstm') or {}
     windows = model.get('windows') or []
     review = json.loads(clip.review_json or '{}')
     return {'observation_id': observation_id,
@@ -54,6 +56,7 @@ def current_audio_evidence(db, observation_id):
             'dog_score': model.get('dog_score'),
             'threshold': model.get('threshold'),
             'model_role': model.get('model_role'),
+            'model_name': model.get('model_name', 'LSTM'),
             'review_label': review.get('label'),
             'review_source': review.get('source')}
 
@@ -61,7 +64,7 @@ def current_audio_evidence(db, observation_id):
 def care_draft_matches_current_audio(draft, audio):
     if not audio or not audio['analyzed_windows']:
         return True
-    if re.search(r'(?:음성\s*)?LSTM(?:\s*분석)?\s*창\s*(?:수)?(?:는|가|은)?\s*0\s*개', draft.summary):
+    if re.search(r'(?:음성\s*)?(?:LSTM|YAMNet)(?:\s*분석)?\s*창\s*(?:수)?(?:는|가|은)?\s*0\s*개', draft.summary, re.I):
         return False
     if audio['dog_candidate_windows'] == 0 and audio['review_label'] in {'other', 'external_or_tv'}:
         summary = draft.summary
@@ -69,6 +72,37 @@ def care_draft_matches_current_audio(draft, audio):
         contradicted = ('다르', '불일치', '의견이 불확실', '의견은 불확실', '의견이 판단 어려움')
         return any(term in summary for term in expected) and not any(term in summary for term in contradicted)
     return True
+
+
+def care_steps(context, evidence):
+    """Concrete checks derived from the current observation and human review.
+
+    These are conditional care options, not inferred behavior or treatment claims.
+    """
+    audio = evidence.get('current_audio') or {}
+    if audio.get('analyzed_windows'):
+        label = audio.get('review_label')
+        candidates = audio.get('dog_candidate_windows', 0)
+        if label == 'external_or_tv':
+            return ['TV·외부 소리라는 확인 의견이 맞는지 원본을 다시 듣고 소리의 출처를 기록해 주세요.',
+                    '같은 소리에 반복해서 반응하는지 확인하고, 필요하면 TV 음량이나 창가·현관의 자극을 줄여 보세요.']
+        if label == 'other':
+            return ['원본에서 어떤 소리인지 적고, 다음 외출에도 같은 소리가 나타나는지 비교해 주세요.',
+                    '이번 자료만으로 반려견 행동 변화나 음악의 필요성을 판단하지 마세요.']
+        if not candidates:
+            return ['모델이 짖음 후보로 표시하지 않은 구간도 원본을 들어 놓친 소리가 있는지 확인해 주세요.',
+                    '반려견 소리로 확인되면 그 시각의 주변 자극과 실제 반려견 모습을 기록해 주세요.']
+        steps = ['후보 구간의 원본 소리와 연결된 영상이 있다면 전후 장면을 확인해 주세요.',
+                 '실제 짖음으로 확인되면 현관·창가·TV 등 당시의 자극과 반려견 반응을 기록하고, 반복되는 자극을 줄여 보세요.']
+        if label == 'pet_vocalization':
+            steps.append('보호자가 원하면 낮은 음량의 잔잔한 음악을 짧게 시험하고, 재생 전후 반응을 기록해 주세요. 음악은 짖음의 원인 해결이나 치료로 간주하지 않습니다.')
+        else:
+            steps.append('소리 종류가 아직 불확실합니다. 반려견의 짖음으로 확인되고 편안한 환경을 원할 때만 잔잔한 음악을 선택적으로 시험해 보세요.')
+        return steps
+    if context.observed_behavior in {'spinning', 'pacing', 'sit_stand_repeat'}:
+        return ['반복 움직임이 보인 원본과 전후 상황을 확인하고, 소음·방문·활동 부족 같은 가능한 자극을 기록해 주세요.',
+                '같은 상황이 반복되면 조용한 공간과 짧은 놀이·휴식 시간을 마련하고 변화를 비교해 주세요.']
+    return ['관찰 원본과 당시 주변 상황을 확인하고, 다음 기록에서도 같은 신호가 반복되는지 비교해 주세요.']
 
 
 def evaluate(db, observation_id, question):
@@ -95,34 +129,55 @@ def evaluate(db, observation_id, question):
                     'care_history': retrieval.get_care_history(db, observation.pet_id, before, start=plan['start']),
                     'tool_calls': []}
     evidence['query_plan'] = plan
+    evidence['current_observation_id'] = observation.id
     evidence['current_audio'] = current_audio_evidence(db, observation.id)
     evidence['profile'] = profile_out(db.get(PetProfileLog, observation.pet_id))
     evidence['frequency_comparison'] = compare_candidate_frequency(context, evidence)
     current_audio = evidence['current_audio']
+    evidence['care_steps'] = care_steps(context, evidence)
     provider = get_provider()
     provider_name = provider.name
+    provider_stage = 'generate'
     try:
         draft = CareSuggestionDraft.model_validate(provider.suggest(context, evidence, question))
-        if not set(draft.cited_observation_ids).issubset({r['id'] for r in evidence['records']}):
-            raise ValueError('provider cited a record outside retrieved evidence')
+        provider_stage = 'citation_validation'
+        allowed_citations = {observation.id, *(r['id'] for r in evidence['records'])}
+        if not set(draft.cited_observation_ids).issubset(allowed_citations):
+            raise ValueError('provider cited a record outside current or retrieved evidence')
+        provider_stage = 'audio_consistency_validation'
         if not care_draft_matches_current_audio(draft, current_audio):
             raise ValueError('provider contradicted current audio review')
     except Exception as exc:
         provider_name = 'rule-fallback'
         response = getattr(exc, 'response', None)
-        evidence['provider_failure'] = {'type': type(exc).__name__,
+        evidence['provider_failure'] = {'type': type(exc).__name__, 'stage': provider_stage,
                                        'http_status': response.status_code if response is not None else None}
+        if hasattr(exc, 'errors'):
+            evidence['provider_failure']['field_errors'] = [
+                {'field': '.'.join(map(str, error['loc'])), 'code': error['type']}
+                for error in exc.errors()]
         draft = RuleBasedProvider().suggest(context, evidence, question)
     if current_audio and current_audio['analyzed_windows']:
-        model_reason = (f"현재 음성 LSTM 분석 창 {current_audio['analyzed_windows']}개 중 개 짖음 소리 후보 "
+        model_reason = (f"현재 {current_audio['model_name']} 분석 창 {current_audio['analyzed_windows']}개 중 개 짖음 소리 후보 "
                         f"{current_audio['dog_candidate_windows']}개입니다. 5초 창은 정확한 짖음 횟수가 아닙니다.")
         review_labels = {'pet_vocalization': '반려견 소리', 'external_or_tv': 'TV·외부 소리',
                          'other': '기타 소리', 'uncertain': '판단 어려움'}
-        source = ('시연 담당자' if current_audio['review_source'] == 'demo_operator_opinion' else '보호자')
+        source = ('시연 담당자' if current_audio['input_scope'] == 'public_demo' or
+                  current_audio['review_source'] == 'demo_operator_opinion' else '보호자')
         review_reason = (f"{source} 확인 의견: {review_labels.get(current_audio['review_label'], '미확인')}. "
                          '모델 정답이나 즉시 재학습 결과가 아닙니다.')
         draft = draft.model_copy(update={'reasons': [model_reason, review_reason, *draft.reasons][:10]})
-        if context.observed_behavior == 'unknown' and draft.recommended_actions:
+        music_eligible = (current_audio['dog_candidate_windows'] > 0 and
+                          current_audio['review_label'] == 'pet_vocalization')
+        if music_eligible:
+            summary = draft.summary
+            if '음악' not in summary:
+                summary += ' 보호자가 원하면 잔잔한 음악을 짧게 시험하고 전후 반응을 기록할 수 있습니다.'
+            draft = draft.model_copy(update={'summary': summary,
+                                             'recommended_actions': ['music'],
+                                             'music_style': 'calm_piano',
+                                             'state': 'care_option'})
+        elif draft.recommended_actions:
             draft = draft.model_copy(update={'recommended_actions': [], 'music_style': None,
                                              'state': 'insufficient_observation'})
     row = CareSuggestionLog(observation_id=observation.id, pet_id=observation.pet_id,

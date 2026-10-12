@@ -13,6 +13,7 @@ const String apiBase = String.fromEnvironment(
   'PETMIND_API_BASE',
   defaultValue: 'http://localhost:8010',
 );
+const bool yamnetTrial = bool.fromEnvironment('PETMIND_YAMNET_TRIAL', defaultValue: false);
 
 void main() {
   runApp(const PetMindApp());
@@ -25,7 +26,7 @@ class PetMindApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'PetMind Care',
+      title: yamnetTrial ? 'PetMind YAMNet + RAG 시험' : 'PetMind Care',
       debugShowCheckedModeBanner: false,
       theme: GenesisTheme.light,
       home: const DashboardPage(),
@@ -62,6 +63,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late final http.Client client;
   List<dynamic> actions = const [];
   bool connected = false;
+  String careProvider = 'unknown';
   int section = 0;
   static const sectionNames = ['홈', '외출·음원', 'RAG·케어', '기록', '설정·시연'];
   static const sectionIcons = [Icons.home_outlined, Icons.mic_none,
@@ -154,6 +156,8 @@ class _DashboardPageState extends State<DashboardPage> {
             optionalFailures.add('프로필');
             return profile;
           }),
+        if (yamnetTrial) _get('/health').catchError((Object _) => null)
+          else Future<dynamic>.value(null),
       ]);
       if (!mounted || sequence != _refreshSequence || requestedPet != petId) return;
       setState(() {
@@ -167,6 +171,7 @@ class _DashboardPageState extends State<DashboardPage> {
         final audioFiles = (catalog['files'] as List<dynamic>? ?? const []).where((file) => file['type'] == 'audio');
         audioFilename ??= audioFiles.isEmpty ? null : audioFiles.first['filename'].toString();
         profile = values[6] as Map<String, dynamic>?;
+        careProvider = (values[7] as Map<String, dynamic>?)?['components']?['care_provider']?.toString() ?? 'unknown';
         connected = true;
         if (!silent) _optionalFailures = optionalFailures;
         connectionIssue = _optionalFailures.isEmpty ? null
@@ -320,7 +325,7 @@ class _DashboardPageState extends State<DashboardPage> {
               letterSpacing: -0.4)),
             if (constraints.maxWidth >= 340) ...[
               const SizedBox(width: 12),
-              Flexible(child: Text('CARE / EVIDENCE', maxLines: 1,
+              Flexible(child: Text(yamnetTrial ? 'YAMNET + RAG / 시험' : 'CARE / EVIDENCE', maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
                   color: GenesisTheme.secondaryInk, letterSpacing: 1.1))),
@@ -378,6 +383,9 @@ class _DashboardPageState extends State<DashboardPage> {
           ]),
           _sectionPage(2, [
             _sectionTitle('RAG 질문과 케어', '저장된 관찰과 보호자 의견을 근거로 제안을 검토합니다.'),
+            if (yamnetTrial) Text(careProvider == 'gemini'
+              ? '이 비교 사이트는 로컬 기록을 검색하고 Gemini 생성 답변을 시도합니다. 실제 사용 여부는 아래 제안의 제공자 표시로 확인하세요.'
+              : '이 비교 사이트는 로컬 기록 검색과 규칙 기반 케어 제안을 사용합니다. Gemini 생성 답변은 현재 실행하지 않습니다.'),
             TextField(controller: question, decoration: const InputDecoration(labelText: '기록에 대해 질문하기'), maxLength: 1000),
             FilledButton.icon(onPressed: busy || observation == null ? null : evaluate,
               icon: const Icon(Icons.psychology_alt), label: const Text('현재 상태 평가하기')),
@@ -505,8 +513,8 @@ class _DashboardPageState extends State<DashboardPage> {
         if (currentAudio != null) ...[
           const SizedBox(height: 8),
           Text('이번 관찰 #${currentAudio['observation_id']} · ${currentAudio['input_scope'] == 'public_demo' ? '공개·생성 시연 자료' : '사용자 음원'}'),
-          Text('음성 LSTM: 분석 창 ${currentAudio['analyzed_windows']}개 중 개 짖음 소리 후보 ${currentAudio['dog_candidate_windows']}개'),
-          Text('${currentAudio['review_source'] == 'demo_operator_opinion' ? '시연 담당자' : '보호자'} 확인 의견: ${_audioReviewName(currentAudio['review_label']?.toString())}'),
+          Text('${currentAudio['model_name'] ?? 'LSTM'}: 분석 창 ${currentAudio['analyzed_windows']}개 중 개 짖음 소리 후보 ${currentAudio['dog_candidate_windows']}개'),
+          Text('${currentAudio['input_scope'] == 'public_demo' || currentAudio['review_source'] == 'demo_operator_opinion' ? '시연 담당자' : '보호자'} 확인 의견: ${_audioReviewName(currentAudio['review_label']?.toString())}'),
           const Text('5초 창은 실제 짖음 횟수가 아니며, 확인 의견도 정답 라벨은 아닙니다.'),
         ],
         if (evidence?['status'] == 'failed') const Text('기록 검색 실패: 현재 관찰만으로 제안했습니다.'),
@@ -617,8 +625,6 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _overview() {
-    final context = observation?['context'] as Map<String, dynamic>? ?? const {};
-    final bark = context['bark'] as Map<String, dynamic>? ?? const {};
     return LayoutBuilder(builder: (_, constraints) {
       final width = constraints.maxWidth >= 760 ? (constraints.maxWidth - 24) / 3 : constraints.maxWidth;
       return Wrap(
@@ -637,8 +643,8 @@ class _DashboardPageState extends State<DashboardPage> {
           _metricCard(
             width,
             '음성 신호',
-            observation == null ? '데이터 없음' : '에너지 기반 소리 후보 ${bark['count'] ?? 0}회',
-            '에너지 기반 · 최대 ${bark['peak_db'] ?? '-'} dBFS',
+            observation == null ? '데이터 없음' : '음성 분석 기록 확인',
+            '외출·음원 화면에서 모델 감지 창과 원본 소리를 확인하세요.',
             Icons.graphic_eq,
           ),
         ],
@@ -677,6 +683,7 @@ class _DashboardPageState extends State<DashboardPage> {
       );
     }
     final reasons = suggestion!['reasons'] as List<dynamic>? ?? const [];
+    final careSteps = suggestion!['care_steps'] as List<dynamic>? ?? const [];
     final recommended = suggestion!['recommended_actions'] as List<dynamic>? ?? const [];
     final pending = const {'pending'}
         .contains(suggestion!['status']);
@@ -692,6 +699,14 @@ class _DashboardPageState extends State<DashboardPage> {
           ]),
           const SizedBox(height: 14),
           Text(suggestion!['summary']?.toString() ?? '-', style: Theme.of(context).textTheme.titleMedium),
+          if (careSteps.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text('보호자가 해볼 일', style: Theme.of(context).textTheme.labelLarge),
+            ...careSteps.map((step) => Padding(
+              padding: const EdgeInsets.only(top: 5),
+              child: Text('• $step'),
+            )),
+          ],
           const SizedBox(height: 12),
           Text('판단 근거', style: Theme.of(context).textTheme.labelLarge),
           ...reasons.map((reason) => Padding(

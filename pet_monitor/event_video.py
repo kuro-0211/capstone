@@ -48,8 +48,8 @@ class EventPlanner:
 
 
 def candidate_windows(analysis):
-    """Only LSTM positives trigger recording, never energy alone or failed models."""
-    model = analysis.get('audio_lstm') or {}
+    """Only audio model positives trigger recording, never energy alone or failed models."""
+    model = analysis.get('audio_model') or analysis.get('audio_lstm') or {}
     threshold = model.get('threshold')
     if threshold is None or not math.isfinite(threshold) or not 0 <= threshold <= 1:
         return []

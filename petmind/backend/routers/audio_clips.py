@@ -6,6 +6,7 @@ import hashlib
 import html
 import io
 import json
+import math
 import pickle
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,7 @@ from urllib.parse import quote
 
 import numpy as np
 import soundfile as sf
+import requests
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import Field
@@ -23,10 +25,10 @@ from starlette.concurrency import run_in_threadpool
 from ..database import AudioClipLog, get_db, utcnow
 from ..schemas import ObservationIn, StrictModel
 from ..services.observations import save
-from ..settings import ROOT, audio_lstm_checkpoint_path
+from ..settings import ROOT, audio_lstm_checkpoint_path, settings
 
 router = APIRouter(prefix='/audio-clips', tags=['user audio'])
-FOLDER = ROOT/'artifacts'/'user_audio'
+FOLDER = settings.audio_storage_dir
 MAX_BYTES = 12 * 1024 * 1024
 
 
@@ -61,10 +63,8 @@ def to_out(row):
     analysis = json.loads(row.analysis_json)
     capture_kind = analysis.get('capture', {}).get('kind')
     score = analysis.get('dog_score')
-    threshold = analysis.get('audio_lstm', {}).get('threshold', .5)
+    threshold = (analysis.get('audio_model') or analysis.get('audio_lstm') or {}).get('threshold', .5)
     reason = 'uncertain' if score is None or abs(score-threshold) <= .1 else 'routine_sample'
-    if analysis.get('model_disagreement'):
-        reason = 'model_disagreement'
     original_available = (row.deleted_at is None and row.expires_at > utcnow()
                           and path_for(row).is_file())
     return {'id': row.id, 'pet_id': row.pet_id, 'observation_id': row.observation_id,
@@ -76,6 +76,33 @@ def to_out(row):
                             '장치 수집 음원' if capture_kind == 'device' else
                             '원본 파일 재생 음원' if capture_kind == 'file_replay' else
                             '사용자 업로드 음원')+'; 소리 발생 위치·감정은 자동 확정하지 않습니다.'}
+
+
+def predict_yamnet(content: bytes, duration_s: float) -> dict:
+    """Convert the local Bark-only service into the existing audio evidence contract."""
+    response = requests.post(settings.yamnet_url, data=content,
+                             headers={'Content-Type': 'audio/wav'}, timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get('model') != 'YAMNet Bark (direct score; no LSTM)' or payload.get('threshold') != .05:
+        raise ValueError('unexpected YAMNet model or threshold')
+    raw_windows = payload.get('windows')
+    if not isinstance(raw_windows, list) or len(raw_windows) != math.ceil(duration_s/5):
+        raise ValueError('YAMNet returned the wrong number of windows')
+    windows = []
+    for index, row in enumerate(raw_windows):
+        start, end, score = row['start_s'], row['end_s'], row['bark_score']
+        if (not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (start, end, score))
+                or abs(start-index*5) > .01 or abs(end-min((index+1)*5, duration_s)) > .02
+                or not 0 <= score <= 1):
+            raise ValueError('YAMNet returned an invalid window')
+        windows.append({'start_s': start, 'end_s': end, 'dog_score': score,
+                        'label': 'dog_candidate' if score >= .05 else 'other_candidate',
+                        'padded': bool(row.get('padded', False))})
+    return {'model_name': 'YAMNet Bark', 'model_role': 'experimental',
+            'windows': windows, 'dog_score': max(row['dog_score'] for row in windows),
+            'threshold': .05,
+            'scope': 'direct YAMNet Bark score; not calibrated probability or dog identity'}
 
 
 def store_clip(db, content, pet_id, training_consent, retention_days, outing_id, demo_source=None,
@@ -110,21 +137,32 @@ def store_clip(db, content, pet_id, training_consent, retention_days, outing_id,
         analysis['input_scope'] = 'public_demo' if demo_source else 'user_upload'
         if demo_source:
             analysis['demo_source'] = demo_source
-        checkpoint = audio_lstm_checkpoint_path(ROOT)
-        if checkpoint.exists():
-            from pet_monitor.audio_model_cache import get_audio_predictor
+        if settings.audio_detector == 'yamnet':
             try:
-                experiment = get_audio_predictor(checkpoint).predict(path)
-                experiment['model_role'] = 'default' if checkpoint.name == 'esc50_lstm.pt' else 'experimental'
-                experiment['checkpoint_name'] = checkpoint.name
-                analysis['audio_lstm'] = experiment
-                analysis['dog_score'] = experiment['dog_score']
-                analysis['model_disagreement'] = ((experiment['dog_score'] >= experiment['threshold']) !=
-                                                  (analysis['context']['bark']['count'] > 0))
-            except (ValueError, RuntimeError, OSError, KeyError, EOFError, pickle.UnpicklingError):
-                analysis['model_status'] = 'experimental_model_failed'
+                experiment = predict_yamnet(content, info.duration)
+                analysis['audio_model'] = experiment
+            except (ValueError, RuntimeError, KeyError, TypeError, requests.RequestException):
+                analysis['model_status'] = 'yamnet_model_failed'
+        elif settings.audio_detector == 'lstm':
+            checkpoint = audio_lstm_checkpoint_path(ROOT)
+            if checkpoint.exists():
+                from pet_monitor.audio_model_cache import get_audio_predictor
+                try:
+                    experiment = get_audio_predictor(checkpoint).predict(path)
+                    experiment['model_name'] = 'LSTM'
+                    experiment['model_role'] = 'default' if checkpoint.name == 'esc50_lstm.pt' else 'experimental'
+                    experiment['checkpoint_name'] = checkpoint.name
+                    analysis['audio_lstm'] = experiment
+                except (ValueError, RuntimeError, OSError, KeyError, EOFError, pickle.UnpicklingError):
+                    analysis['model_status'] = 'experimental_model_failed'
+            else:
+                analysis['model_status'] = 'experimental_model_not_prepared'
         else:
-            analysis['model_status'] = 'experimental_model_not_prepared'
+            raise ValueError('PETMIND_AUDIO_DETECTOR must be lstm or yamnet')
+        if experiment := analysis.get('audio_model') or analysis.get('audio_lstm'):
+            analysis['dog_score'] = experiment['dog_score']
+            analysis['model_disagreement'] = ((experiment['dog_score'] >= experiment['threshold']) !=
+                                              (analysis['context']['bark']['count'] > 0))
         if captured_at is not None:
             from pet_monitor.event_video import candidate_windows
             analysis['capture'] = {'started_at': captured_at.isoformat(), 'kind': capture_kind,
@@ -132,9 +170,9 @@ def store_clip(db, content, pet_id, training_consent, retention_days, outing_id,
             analysis['event_video'] = {'status': 'pending' if candidate_windows(analysis) else
                                       'model_unavailable' if analysis.get('model_status') else 'not_triggered'}
         context = analysis['context']
-        context['input_note'] = ('공개 자료 시연' if demo_source else '사용자 업로드 음원') + '; 에너지 기반 짖음 후보, 실제 짖음 여부는 보호자 확인 필요'
+        context['input_note'] = ('공개 자료 시연' if demo_source else '사용자 업로드 음원') + '; 소리 크기 변화는 짖음 판별이 아님; 음성 모델 후보와 원본 확인 필요'
         if capture_kind:
-            context['input_note'] = ('장치 동시 수집' if capture_kind == 'device' else '원본 파일 재생 입력') + '; 음성 LSTM 후보와 보호자 의견으로 확인; 영상 자동 행동 분석 없음'
+            context['input_note'] = ('장치 동시 수집' if capture_kind == 'device' else '원본 파일 재생 입력') + '; 음성 모델 후보와 보호자 의견으로 확인; 영상 자동 행동 분석 없음'
         observation = save(db, ObservationIn(pet_id=pet_id, session_id='audio-'+clip_id,
             observed_at=observed_at.isoformat()+'Z', source='live' if capture_kind == 'device' else 'user_audio', context=context, outing_id=outing_id), commit=False)
         row = AudioClipLog(id=clip_id, pet_id=pet_id, observation_id=observation.id, filename=path.name,
@@ -187,12 +225,12 @@ def review_queue(pet_id: str, limit: int = Query(default=5, ge=2, le=20), db=Dep
     pending = [to_out(row) for row in rows if not json.loads(row.review_json) and path_for(row).is_file()]
     candidates = [item for item in pending if item['review_priority'] != 'routine_sample']
     routine = [item for item in pending if item['review_priority'] == 'routine_sample']
-    # Deterministic exploration avoids selecting only uncertain/model-disagreement clips.
+    # Deterministic exploration includes ordinary clips as well as uncertain model scores.
     routine.sort(key=lambda item: hashlib.sha256(('review-v1:'+item['id']).encode()).hexdigest())
     chosen = candidates[:limit-1] + routine[:1]
     used = {item['id'] for item in chosen}
     chosen += [item for item in candidates+routine if item['id'] not in used][:limit-len(chosen)]
-    return {'items':chosen, 'pending_count':len(pending), 'policy':'uncertainty/disagreement + one routine slot',
+    return {'items':chosen, 'pending_count':len(pending), 'policy':'model uncertainty + one routine slot',
             'scope':'uploaded clips only; missed events outside uploaded audio cannot be evaluated'}
 
 

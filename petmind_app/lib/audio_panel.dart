@@ -195,7 +195,8 @@ class _AudioPanelState extends State<AudioPanel> {
       if (clips.isEmpty) const Text('아직 저장된 사용자 음원이 없습니다.'),
       for (final raw in queueOnly ? reviewQueue : clips) Builder(builder:(context) {
         final item = Map<String,dynamic>.from(raw);
-        final model = item['analysis']?['audio_lstm'];
+        final model = item['analysis']?['audio_model'] ?? item['analysis']?['audio_lstm'];
+        final modelName = model?['model_name'] ?? 'LSTM';
         return Padding(padding: const EdgeInsets.only(bottom: 12), child: Card(child:Padding(
           padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
           Text('관찰 #${item['observation_id']} · ${item['duration_s']}초',
@@ -206,12 +207,12 @@ class _AudioPanelState extends State<AudioPanel> {
           Chip(
             backgroundColor: item['review_priority'] == 'routine_sample'
               ? const Color(0xFFF4F4F5) : const Color(0xFFFFF7E6),
-            label: Text(item['review_priority'] == 'model_disagreement' ? '확인 권장: 모델과 에너지 감지 결과가 다릅니다.' :
-              item['review_priority'] == 'uncertain' ? '확인 권장: 판별 근거가 부족합니다.' : '일반 구간 확인 표본',
+            label: Text(item['review_priority'] == 'uncertain' ? '확인 권장: 모델 점수가 기준에 가깝습니다.' : '일반 구간 확인 표본',
               style: TextStyle(color: item['review_priority'] == 'routine_sample'
               ? GenesisTheme.secondaryInk : GenesisTheme.warningInk))),
-          if (model?['model_role'] == 'experimental') const Text('실험 후보 모델 · 합성 시연에서만 비교 · 실제 가정 성능 미검증'),
-          if (model != null) Text('LSTM 개 짖음 소리 후보 점수 ${scoreLabel(model['dog_score'])} · 기준 ${scoreLabel(model['threshold'])} (정확도·확률 아님)',
+          if (model?['model_role'] == 'experimental')
+            Text('$modelName 비교 시험 · 실제 가정 성능 미검증 · 공개 시연 자료는 별도 표시'),
+          if (model != null) Text('$modelName 개 짖음 소리 후보 점수 ${scoreLabel(model['dog_score'])} · 기준 ${scoreLabel(model['threshold'])} (정확도·확률 아님)',
             style: Theme.of(context).textTheme.bodySmall),
           if (model?['windows'] is List && (model['windows'] as List).isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -231,7 +232,7 @@ class _AudioPanelState extends State<AudioPanel> {
               );
             }),
           ],
-          if (model == null) const Text('실험 음성 모델이 준비되지 않았거나 분석에 실패했습니다. 에너지 후보만 기록했습니다.'),
+          if (model == null) const Text('음성 모델이 준비되지 않았거나 분석에 실패했습니다. 소리 크기 변화만으로 짖음을 판별할 수 없습니다.'),
           if ((item['review'] as Map).isNotEmpty) Text('${item['review']['source'] == 'demo_operator_opinion' ? '시연 담당자 의견' : '보호자 의견'}: ${reviewLabel(item['review']['label'])} · ${item['review']['note']}'),
           Text('학습 참여 ${item['training_consent'] == true ? '동의' : '미동의'} · 원본 만료 ${expiryLabel(item['expires_at'])}'),
           Wrap(spacing:8,children:[

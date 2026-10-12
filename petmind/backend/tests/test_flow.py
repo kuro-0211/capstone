@@ -195,6 +195,17 @@ def test_audio_only_energy_candidates_do_not_trigger_music():
     assert '소리 원본' in draft.summary
 
 
+def test_care_steps_follow_human_review_without_inventing_behavior():
+    context = PetContext(observed_behavior='unknown', behavior_duration_seconds=0,
+                         bark_detected=True, bark_count=9, window_s=15)
+    evidence = {'current_audio': {'analyzed_windows': 3, 'dog_candidate_windows': 2,
+                                  'review_label': 'external_or_tv'}}
+    steps = care.care_steps(context, evidence)
+    assert any('TV' in step for step in steps)
+    assert not any('음악' in step for step in steps)
+    assert not any('9' in step for step in steps)
+
+
 def test_missing_observation_and_invalid_input(client):
     assert client.post('/care/evaluate', json={'observation_id': 9999}).status_code == 404
     data = observe(client)
@@ -217,6 +228,21 @@ def test_invalid_llm_citation_falls_back(client, monkeypatch):
     result = evaluate(client, observe(client))
     assert result['provider'] == 'rule-fallback'
     assert result['cited_observation_ids'] == []
+
+
+def test_llm_can_cite_the_current_observation_but_not_unrelated_records(client, monkeypatch):
+    current = observe(client)
+    class CurrentProvider:
+        name = 'gemini:test'
+        def suggest(self, context, evidence, question):
+            assert evidence['current_observation_id'] == current['id']
+            draft = care.RuleBasedProvider().suggest(context, evidence, question)
+            draft.cited_observation_ids = [current['id']]
+            return draft
+    monkeypatch.setattr(care, 'get_provider', CurrentProvider)
+    result = evaluate(client, current)
+    assert result['provider'] == 'gemini:test'
+    assert result['cited_observation_ids'] == [current['id']]
 
 
 def test_mcp_failure_is_not_empty_success(client, monkeypatch):

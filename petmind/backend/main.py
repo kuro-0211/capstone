@@ -87,8 +87,10 @@ def health():
         db.execute(text('SELECT 1'))
     return {'status': 'healthy', 'components': {'database': 'ok', 'care_provider': settings.provider,
             'gemini_key_configured': bool(settings.gemini_api_key), 'retrieval_mode': settings.retrieval_mode,
-            'audio_lstm_checkpoint_present': audio_lstm_checkpoint_path(ROOT).is_file(),
-            'audio_lstm_model_role': 'default' if settings.audio_lstm_checkpoint_name == 'esc50_lstm.pt' else 'experimental',
+            'audio_detector': settings.audio_detector,
+            'audio_lstm_checkpoint_present': settings.audio_detector == 'lstm' and audio_lstm_checkpoint_path(ROOT).is_file(),
+            'audio_lstm_model_role': ('not_used' if settings.audio_detector != 'lstm' else
+                                      'default' if settings.audio_lstm_checkpoint_name == 'esc50_lstm.pt' else 'experimental'),
             'action_mode': 'simulated'}, 'version': app.version}
 
 

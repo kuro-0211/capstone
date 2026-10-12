@@ -1,4 +1,5 @@
 import io
+from dataclasses import replace
 from datetime import timedelta
 
 import numpy as np
@@ -26,6 +27,71 @@ def upload(client, extra=''):
                            content=wav(),headers={'Content-Type':'audio/wav'})
     assert response.status_code == 201,response.text
     return response.json()
+
+
+def test_yamnet_upload_flows_to_outing_and_care_without_lstm(client, monkeypatch):
+    monkeypatch.setattr(audio_clips, 'settings', replace(audio_clips.settings,
+        audio_detector='yamnet', yamnet_url='http://127.0.0.1:8030/analyze'))
+    calls = []
+    class Response:
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return {'model': 'YAMNet Bark (direct score; no LSTM)', 'threshold': .05,
+                    'windows': [{'start_s': 0, 'end_s': 1, 'bark_score': .82, 'padded': True}]}
+    def fake_post(url, data, headers, timeout):
+        calls.append((url, data, headers, timeout))
+        return Response()
+    monkeypatch.setattr(audio_clips.requests, 'post', fake_post)
+    outing = client.post('/outings', json={'pet_id': 'dog-a', 'input_mode': 'uploaded_audio'}).json()['id']
+    item = upload(client, '&outing_id='+outing+'&demo_source=public+bark+demo')
+    assert calls == [('http://127.0.0.1:8030/analyze', wav(), {'Content-Type': 'audio/wav'}, 30)]
+    model = item['analysis']['audio_model']
+    assert model['model_name'] == 'YAMNet Bark' and model['dog_score'] == .82
+    assert 'audio_lstm' not in item['analysis']
+    report = client.get(f'/outings/{outing}/summary?pet_id=dog-a').json()
+    assert report['audio_model_name'] == 'YAMNet Bark'
+    assert (report['lstm_dog_window_count'], report['lstm_analyzed_window_count']) == (1, 1)
+    explanation = client.post(f'/outings/{outing}/explain', json={'pet_id': 'dog-a',
+        'question': '이번 외출에 짖음 후보가 있었나요?'}).json()
+    assert any('YAMNet Bark' in claim['text'] for claim in explanation['claims'])
+    care = client.post('/care/evaluate', json={'observation_id': item['observation_id'],
+        'question': '짖음 후보를 확인해 줘'}).json()
+    assert care['retrieval']['current_audio']['model_name'] == 'YAMNet Bark'
+    assert 'YAMNet Bark' in care['reasons'][0]
+    assert '시연 담당자 확인 의견: 미확인' in care['reasons'][1]
+    assert any('현관·창가·TV' in step for step in care['care_steps'])
+    assert care['recommended_actions'] == []
+    review = client.post('/audio-clips/'+item['id']+'/review', json={
+        'pet_id': 'dog-a', 'label': 'uncertain', 'note': '원본을 다시 확인할 필요가 있습니다.'}).json()
+    assert review['review']['source'] == 'demo_operator_opinion'
+    after_review = client.post(f'/outings/{outing}/explain', json={
+        'pet_id': 'dog-a', 'question': '시연 담당자 의견은?'}).json()
+    assert any('원본을 다시 확인' in claim['text'] for claim in after_review['claims'])
+    updated_care = client.post('/care/evaluate', json={'observation_id': item['observation_id'],
+        'question': '시연 담당자 의견을 포함해 설명해 줘'}).json()
+    assert updated_care['retrieval']['current_audio']['review_label'] == 'uncertain'
+    assert any('음악' in step and '확인' in step for step in updated_care['care_steps'])
+    assert updated_care['recommended_actions'] == []
+    client.post('/audio-clips/'+item['id']+'/review', json={
+        'pet_id': 'dog-a', 'label': 'pet_vocalization', 'note': '원본에서 반려견 발성을 확인했습니다.'})
+    confirmed = client.post('/care/evaluate', json={'observation_id': item['observation_id'],
+        'question': '반려견 소리로 확인했는데 무엇을 해볼까요?'}).json()
+    assert confirmed['recommended_actions'] == ['music']
+    assert confirmed['music_style'] == 'calm_piano'
+    assert any('재생 전후 반응' in step for step in confirmed['care_steps'])
+    assert client.get('/care/latest?pet_id=dog-a').json()['care_steps'] == confirmed['care_steps']
+    action = client.post(f"/care/{confirmed['id']}/approve", json={'action_type': 'music'}).json()
+    assert action['request']['mode'] == 'simulated'
+
+
+def test_yamnet_unavailable_is_explicit_not_a_negative_prediction(client, monkeypatch):
+    monkeypatch.setattr(audio_clips, 'settings', replace(audio_clips.settings, audio_detector='yamnet'))
+    monkeypatch.setattr(audio_clips.requests, 'post', lambda *args, **kwargs: (_ for _ in ()).throw(
+        audio_clips.requests.ConnectionError('sidecar stopped')))
+    item = upload(client)
+    assert item['analysis']['model_status'] == 'yamnet_model_failed'
+    assert 'audio_model' not in item['analysis']
 
 
 def test_explicit_consent_scope_review_and_original_deletion(client):
