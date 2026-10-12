@@ -298,7 +298,10 @@ void main() {
         suggestion = {'id': 7, 'observation_id': 42, 'summary': '상태를 확인해 주세요.', 'severity': 'attention', 'status': 'pending',
           'provider': 'rule', 'reasons': ['반복 신호'], 'recommended_actions': ['music'],
           'cited_observation_ids': [3], 'retrieval': {'mode': 'mcp', 'status': 'ok',
-            'records': [{'id': 3, 'summary': '과거 관찰', 'source': 'synthetic_demo', 'observed_at': '2026-10-10'}],
+             'records': [{'id': 3, 'summary': '과거 관찰', 'source': 'user_audio',
+               'input_scope': 'public_demo', 'observed_at': '2026-10-10',
+               'guardian_feedback': [{'source': 'demo_operator_opinion',
+                 'label': 'other', 'note': '공개 시연 확인'}]}],
             'tool_calls': [], 'stats': {'sample_count': 1}}};
         result = suggestion;
       } else if (request.method == 'POST' && path == '/care/7/approve') {
@@ -328,6 +331,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('nav-2')));
     await tester.pumpAndSettle();
     expect(find.textContaining('#3 · 과거 관찰'), findsOneWidget);
+    expect(find.textContaining('기록 #3 시연 담당자 의견: 기타 소리'), findsOneWidget);
+    expect(find.textContaining('공개·생성 시연 자료 · 2026-10-10'), findsOneWidget);
     final approval = find.text('가상 음악 실행 승인');
     await tester.ensureVisible(approval);
     await tester.tap(approval);

@@ -49,6 +49,14 @@ def test_question_normalization_and_sound_uncertainty():
     assert select_facts(facts, '환율은?') == []
 
 
+def test_bark_candidate_question_includes_audio_lstm_result():
+    facts = [{'id': 'energy', 'kind': 'bark'},
+             {'id': 'model', 'kind': 'audio_lstm'},
+             {'id': 'review', 'kind': 'guardian_opinion'}]
+    selected = select_facts(facts, '개 짖음 소리 후보와 시연 담당자 의견을 알려줘')
+    assert {fact['id'] for fact in selected} == {'energy', 'model', 'review'}
+
+
 def test_duration_question_does_not_pull_unrelated_sound_or_opinion():
     facts = [{'id': kind, 'kind': kind} for kind in
              ('summary', 'provenance', 'quality', 'bark', 'guardian_opinion', 'observation')]

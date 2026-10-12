@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -7,7 +8,8 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from petmind.backend import main, mcp_client
-from petmind.backend.database import Base, CareActionLog, get_db
+from petmind.backend.database import AudioClipLog, Base, CareActionLog, get_db, utcnow
+from petmind.backend.schemas import CareSuggestionDraft, PetContext
 from petmind.backend.services import care
 
 
@@ -47,6 +49,59 @@ def evaluate(client, observation):
     response = client.post('/care/evaluate', json={'observation_id': observation['id']})
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def test_care_uses_current_audio_model_and_review_as_distinct_evidence(client):
+    observation = observe(client, scenario='calm')
+    with client.sessions() as db:
+        db.add(AudioClipLog(id='care-audio', pet_id='dog-a', observation_id=observation['id'],
+                            filename='unused.wav', sha256='a'*64, duration_s=5,
+                            training_consent=0, expires_at=utcnow()+timedelta(days=1),
+                            analysis_json=json.dumps({'input_scope': 'public_demo',
+                                'audio_lstm': {'windows': [{'label': 'other_candidate'}],
+                                               'dog_score': 0.7, 'threshold': 0.9,
+                                               'model_role': 'experimental'}}),
+                            review_json=json.dumps({'label': 'uncertain',
+                                'source': 'demo_operator_opinion', 'note': 'untrusted text'})))
+        db.commit()
+    result = evaluate(client, observation)
+    current = result['retrieval']['current_audio']
+    assert current['observation_id'] == observation['id']
+    assert current['input_scope'] == 'public_demo'
+    assert (current['analyzed_windows'], current['dog_candidate_windows']) == (1, 0)
+    assert (current['review_label'], current['review_source']) == ('uncertain', 'demo_operator_opinion')
+    assert 'note' not in current
+    assert '개 짖음 소리 후보 0개' in result['reasons'][0]
+    assert '시연 담당자 확인 의견: 판단 어려움' in result['reasons'][1]
+
+
+@pytest.mark.parametrize(('candidates', 'label', 'expected'), [
+    (1, 'pet_vocalization', '다음 외출'),
+    (0, 'uncertain', '의견을 보완'),
+    (0, 'other', '케어 조치를 권하지'),
+])
+def test_audio_only_care_rule_does_not_invent_an_action(candidates, label, expected):
+    context = PetContext(observed_behavior='unknown', behavior_duration_seconds=5,
+                         bark_detected=True, bark_count=3, window_s=5)
+    evidence = {'current_audio': {'analyzed_windows': 1, 'dog_candidate_windows': candidates,
+                                  'review_label': label}, 'records': [], 'status': 'ok', 'stats': {}}
+    draft = care.RuleBasedProvider().suggest(context, evidence, '다음에 무엇을 확인할까요?')
+    assert expected in draft.summary
+    assert draft.recommended_actions == []
+
+
+def test_care_rejects_model_summary_that_changes_other_sound_review_to_uncertain():
+    audio = {'analyzed_windows': 1, 'dog_candidate_windows': 0, 'review_label': 'other'}
+    wrong = CareSuggestionDraft(state='insufficient_observation', severity='info',
+                                summary='검토 의견이 불확실하므로 원본을 재청취하세요.')
+    right = CareSuggestionDraft(state='insufficient_observation', severity='info',
+                                summary='기타 소리라는 확인 의견이 있습니다. 케어 조치를 권하지 않습니다.')
+    assert care.care_draft_matches_current_audio(wrong, audio) is False
+    assert care.care_draft_matches_current_audio(right, audio) is True
+    wrong_window_count = CareSuggestionDraft(state='insufficient_observation', severity='info',
+        summary='음성 LSTM 창 수는 0개로 측정되어 원본을 다시 들어야 합니다.')
+    assert care.care_draft_matches_current_audio(wrong_window_count,
+        {**audio, 'review_label': 'uncertain'}) is False
 
 
 def test_health_reports_audio_checkpoint_presence_without_claiming_validity(client, tmp_path, monkeypatch):
@@ -126,6 +181,18 @@ def test_calm_unknown_empty_history_and_dismiss(client):
     other = evaluate(client, observe(client, pet='new-dog'))
     assert client.post(f'/care/{other["id"]}/dismiss').json()['status'] == 'dismissed'
     assert client.post(f'/care/{other["id"]}/approve', json={}).status_code == 409
+
+
+def test_audio_only_energy_candidates_do_not_trigger_music():
+    context = PetContext(observed_behavior='unknown', behavior_duration_seconds=0,
+                         bark_detected=True, bark_count=12, window_s=15,
+                         input_note='영상 자동 행동 분석 없음; 음성 관찰')
+    draft = care.RuleBasedProvider().suggest(
+        context, {'status': 'ok', 'records': [], 'stats': {}}, '현재 상태')
+    assert draft.state == 'insufficient_observation'
+    assert draft.recommended_actions == []
+    assert draft.music_style is None
+    assert '소리 원본' in draft.summary
 
 
 def test_missing_observation_and_invalid_input(client):

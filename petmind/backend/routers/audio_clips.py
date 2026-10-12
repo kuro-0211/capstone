@@ -23,7 +23,7 @@ from starlette.concurrency import run_in_threadpool
 from ..database import AudioClipLog, get_db, utcnow
 from ..schemas import ObservationIn, StrictModel
 from ..services.observations import save
-from ..settings import ROOT
+from ..settings import ROOT, audio_lstm_checkpoint_path
 
 router = APIRouter(prefix='/audio-clips', tags=['user audio'])
 FOLDER = ROOT/'artifacts'/'user_audio'
@@ -72,7 +72,7 @@ def to_out(row):
             'expires_at': row.expires_at.isoformat()+'Z', 'deleted': row.deleted_at is not None,
             'analysis': analysis, 'review': review, 'verified': row.verified_at is not None,
             'review_priority': reason, 'audio_available': original_available,
-            'source_note': ('공개 자료 시연: '+analysis['demo_source'] if analysis.get('demo_source') else
+            'source_note': (('공개·생성 자료 시연: ' if analysis['demo_source'].startswith('AI TTS') else '공개 자료 시연: ')+analysis['demo_source'] if analysis.get('demo_source') else
                             '장치 수집 음원' if capture_kind == 'device' else
                             '원본 파일 재생 음원' if capture_kind == 'file_replay' else
                             '사용자 업로드 음원')+'; 소리 발생 위치·감정은 자동 확정하지 않습니다.'}
@@ -110,11 +110,13 @@ def store_clip(db, content, pet_id, training_consent, retention_days, outing_id,
         analysis['input_scope'] = 'public_demo' if demo_source else 'user_upload'
         if demo_source:
             analysis['demo_source'] = demo_source
-        checkpoint = ROOT/'artifacts/audio_lstm/esc50_lstm.pt'
+        checkpoint = audio_lstm_checkpoint_path(ROOT)
         if checkpoint.exists():
             from pet_monitor.audio_model_cache import get_audio_predictor
             try:
                 experiment = get_audio_predictor(checkpoint).predict(path)
+                experiment['model_role'] = 'default' if checkpoint.name == 'esc50_lstm.pt' else 'experimental'
+                experiment['checkpoint_name'] = checkpoint.name
                 analysis['audio_lstm'] = experiment
                 analysis['dog_score'] = experiment['dog_score']
                 analysis['model_disagreement'] = ((experiment['dog_score'] >= experiment['threshold']) !=

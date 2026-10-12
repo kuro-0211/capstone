@@ -239,3 +239,51 @@ def test_mcp_outing_roundtrip_and_invalid_generated_fact(client, monkeypatch):
     assert result['provider'] == 'grounded-template-fallback'
     assert result['failure'] == 'ValueError'
     assert all(c['id'] in result['retrieved_fact_ids'] for c in result['claims'])
+
+
+@pytest.mark.parametrize(('review_label', 'detected', 'expected'), [
+    ('pet_vocalization', True, '다음 외출'),
+    ('pet_vocalization', False, '놓친 사례'),
+    ('uncertain', False, '불확실'),
+    ('other', False, '케어 조치를 권하지'),
+])
+def test_next_check_uses_only_selected_current_evidence(review_label, detected, expected):
+    report = {'lstm_analyzed_window_count': 1,
+              'lstm_dog_window_count': int(detected),
+              'moments': [{'observation_id': 7, 'included_in_metrics': True,
+                           'guardian_review': {'label': review_label}}]}
+    claims = [{'id': 'current.audio_lstm', 'observation_ids': [7]},
+              {'id': 'guardian.7', 'observation_ids': [7]}]
+    suggestions = outings.next_check_suggestions(report, claims)
+    assert len(suggestions) == 1
+    assert expected in suggestions[0]['text']
+    assert suggestions[0]['observation_ids'] == [7]
+    assert suggestions[0]['basis_fact_ids'] == ['current.audio_lstm', 'guardian.7']
+    assert outings.next_check_suggestions(report, claims[:1])[0]['basis_fact_ids'] == ['current.audio_lstm']
+    assert outings.next_check_suggestions(report, claims[1:]) == []
+    assert outings.next_check_suggestions(report, [{'id': 'current.audio_lstm', 'observation_ids': [99]}]) == []
+
+
+def test_visitor_scene_note_is_retrieved_as_demo_description_not_detection(client):
+    oid = start(client)
+    observation = observe(client, oid)
+    with client.sessions() as db:
+        row = db.get(ObservationLog, observation['id'])
+        duration = json.loads(row.context_json)['window_s']
+        db.add(AudioClipLog(id='visitor-demo', pet_id='dog-a', observation_id=row.id,
+            filename='unused.wav', sha256='b'*64, duration_s=duration, training_consent=0,
+            expires_at=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(days=1),
+            analysis_json=json.dumps({'demo_source': '집에 초인종 소리가 나고 노크 소리가 들린 뒤 개가 짖는 소리가 들립니다.',
+                'audio_lstm': {'threshold': 0.9, 'windows': [
+                    {'start_s': 0, 'end_s': 5, 'dog_score': 0.06, 'label': 'other_candidate'},
+                    {'start_s': 5, 'end_s': 10, 'dog_score': 0.96, 'label': 'dog_candidate'}]}}),
+            review_json='{}'))
+        db.commit()
+    result = client.post(f'/outings/{oid}/explain', json={'pet_id': 'dog-a',
+        'question': '초인종과 노크 뒤 개 짖음 소리 후보가 있었나요? 방문 사실은 확인됐나요?'}).json()
+    scene = next(fact for fact in result['claims'] if fact['id'] == f"scene.{observation['id']}")
+    assert '업로드 담당자 입력 설명' in scene['text']
+    assert '실제 방문 사실이 아닙니다' in scene['text']
+    assert scene['observation_ids'] == [observation['id']]
+    assert '현관 영상·방문 기록' in result['next_steps'][0]['text']
+    assert result['next_steps'][0]['basis_fact_ids'] == [f"scene.{observation['id']}", 'current.audio_lstm']

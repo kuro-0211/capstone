@@ -235,7 +235,7 @@ class _OutingsPanelState extends State<OutingsPanel> {
       else
         _metric('판단 불가', '${data['unknown_seconds'] ?? 0}초'),
       _metric('에너지 기반 소리 후보', '${data['energy_bark_candidate_count'] ?? data['bark_candidate_count'] ?? 0}회'),
-      _metric('음성 LSTM 개 소리 후보', '${data['lstm_dog_window_count'] ?? 0}/${data['lstm_analyzed_window_count'] ?? 0}개 분석 창'),
+      _metric('음성 LSTM 개 짖음 소리 후보', '${data['lstm_dog_window_count'] ?? 0}/${data['lstm_analyzed_window_count'] ?? 0}개 분석 창'),
     ]),
     if ((data['demo_sample_seconds'] as num? ?? 0) > 0) Padding(
       padding: const EdgeInsets.only(top: 8),
@@ -331,6 +331,18 @@ class _OutingsPanelState extends State<OutingsPanel> {
                 Wrap(children: [for (final id in claim['observation_ids']) TextButton(
                   onPressed: () => openEvidence(id), child: Text('근거 #$id'))]),
               ])),
+            if ((explanation!['next_steps'] as List? ?? []).isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text('다음 확인 제안', style: Theme.of(context).textTheme.titleMedium),
+              const Text('검색된 기록을 바탕으로 만든 확인 안내입니다. 진단이나 자동 케어 결정은 아닙니다.'),
+              for (final step in explanation!['next_steps']) Padding(
+                padding: const EdgeInsets.only(top: 8), child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(step['text']),
+                    Wrap(children: [for (final id in step['observation_ids']) TextButton(
+                      onPressed: () => openEvidence(id), child: Text('제안 근거 #$id'))]),
+                  ])),
+            ],
             if (comparisonRequested(explanation!['question']) &&
                 explanation!['report']['comparison']['status'] == 'incompatible_provenance')
               const Text('이전 외출 비교: 공개·합성 시연 자료와 사용자 자료를 섞어 비교하지 않습니다.'),

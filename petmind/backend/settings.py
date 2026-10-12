@@ -1,5 +1,6 @@
 """Local development defaults; secrets never enter stored observations."""
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +20,15 @@ class Settings:
     gemini_model: str = os.getenv('PETMIND_GEMINI_MODEL', 'gemini-3.5-flash-lite')
     gemini_timeout_seconds: float = float(os.getenv('PETMIND_GEMINI_TIMEOUT_SECONDS', '12'))
     action_timeout_seconds: int = int(os.getenv('PETMIND_ACTION_TIMEOUT_SECONDS', '30'))
+    audio_lstm_checkpoint_name: str = os.getenv('PETMIND_AUDIO_LSTM_CHECKPOINT', 'esc50_lstm.pt')
 
 
 settings = Settings()
+
+
+def audio_lstm_checkpoint_path(root: Path | None = None) -> Path:
+    """Select a local experimental checkpoint without changing the default model."""
+    name = settings.audio_lstm_checkpoint_name
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+\.pt', name):
+        raise ValueError('PETMIND_AUDIO_LSTM_CHECKPOINT must be a filename under artifacts/audio_lstm')
+    return (root or ROOT) / 'artifacts' / 'audio_lstm' / name

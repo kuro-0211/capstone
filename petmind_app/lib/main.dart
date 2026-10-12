@@ -352,7 +352,10 @@ class _DashboardPageState extends State<DashboardPage> {
               key: ValueKey('nav-$i'),
               avatar: Icon(sectionIcons[i], size: 18),
               label: Text(sectionNames[i]), selected: section == i,
-              onSelected: (_) => setState(() => section = i),
+              onSelected: (_) {
+                setState(() => section = i);
+                if (i == 2) refresh(silent: true);
+              },
             ),
           ])),
         Expanded(child: IndexedStack(index: section, children: [
@@ -487,6 +490,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _evidenceCard() {
     final evidence = suggestion?['retrieval'] as Map<String, dynamic>?;
+    final currentAudio = evidence?['current_audio'] as Map<String, dynamic>?;
     final frequency = evidence?['frequency_comparison'] as Map<String, dynamic>?;
     final plan = evidence?['query_plan'] as Map<String, dynamic>?;
     final search = evidence?['search'] as Map<String, dynamic>?;
@@ -498,6 +502,13 @@ class _DashboardPageState extends State<DashboardPage> {
         const SizedBox(height: 8),
         Text(evidence == null ? '제안을 생성하면 검색 근거가 표시됩니다.'
           : '조회 방식: ${evidence['mode']} · 상태: ${evidence['status']} · 인용 ${suggestion!['cited_observation_ids']}'),
+        if (currentAudio != null) ...[
+          const SizedBox(height: 8),
+          Text('이번 관찰 #${currentAudio['observation_id']} · ${currentAudio['input_scope'] == 'public_demo' ? '공개·생성 시연 자료' : '사용자 음원'}'),
+          Text('음성 LSTM: 분석 창 ${currentAudio['analyzed_windows']}개 중 개 짖음 소리 후보 ${currentAudio['dog_candidate_windows']}개'),
+          Text('${currentAudio['review_source'] == 'demo_operator_opinion' ? '시연 담당자' : '보호자'} 확인 의견: ${_audioReviewName(currentAudio['review_label']?.toString())}'),
+          const Text('5초 창은 실제 짖음 횟수가 아니며, 확인 의견도 정답 라벨은 아닙니다.'),
+        ],
         if (evidence?['status'] == 'failed') const Text('기록 검색 실패: 현재 관찰만으로 제안했습니다.'),
         if (evidence?['status'] == 'ok' && records.isEmpty) const Text('선택 기간과 질문에 맞는 과거 근거가 없습니다.'),
         if (plan != null) Text('검색 기간: ${plan['start']}Z ~ ${plan['before']}Z · 한국 시간 해석'),
@@ -510,11 +521,11 @@ class _DashboardPageState extends State<DashboardPage> {
         for (final record in records) ListTile(
           contentPadding: EdgeInsets.zero,
           title: Text('#${record['id']} · ${record['summary']}'),
-          subtitle: Text('${record['source']} · ${record['observed_at']}'),
+          subtitle: Text('${record['input_scope'] == 'public_demo' ? '공개·생성 시연 자료' : record['source']} · ${record['observed_at']}'),
         ),
         for (final record in records)
           for (final feedback in (record['guardian_feedback'] as List<dynamic>? ?? const []))
-            Text('기록 #${record['id']} 보호자 의견: 짖음 ${feedback['bark_present'] ?? '미확인'} · ${feedback['note'] ?? ''}'),
+            Text('기록 #${record['id']} ${feedback['source'] == 'demo_operator_opinion' ? '시연 담당자 의견' : '보호자 의견'}: ${feedback['label'] != null ? _audioReviewName(feedback['label']?.toString()) : '짖음 ${feedback['bark_present'] ?? '미확인'}'} · ${feedback['note'] ?? ''}'),
         if (evidence != null) Text('통계 표본: ${evidence['stats']?['sample_count'] ?? 0}개 저장 구간'),
         if (frequency?['status'] == 'ok') ...[
           Text('분당 후보 빈도: 현재 ${(frequency!['current_candidates_per_minute'] as num).toStringAsFixed(1)}회 · 과거 저장 구간 ${(frequency['historical_candidates_per_minute'] as num).toStringAsFixed(1)}회'),
@@ -676,7 +687,7 @@ class _DashboardPageState extends State<DashboardPage> {
           Row(children: [
             const Icon(Icons.auto_awesome),
             const SizedBox(width: 8),
-            Expanded(child: Text('AI 케어 제안', style: Theme.of(context).textTheme.titleLarge)),
+            Expanded(child: Text('근거 기반 케어 제안', style: Theme.of(context).textTheme.titleLarge)),
             Chip(label: Text(_severityName(suggestion!['severity']?.toString()))),
           ]),
           const SizedBox(height: 14),
@@ -733,6 +744,13 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   String _actionName(String value) => value == 'music' ? '가상 음악 실행' : value;
+
+  String _audioReviewName(String? value) => const {
+    'pet_vocalization': '반려견 소리',
+    'external_or_tv': 'TV·외부 소리',
+    'other': '기타 소리',
+    'uncertain': '판단 어려움',
+  }[value] ?? '미확인';
 
   String _inputModeName(dynamic value) => const {
     'uploaded_audio': '사용자 음원',

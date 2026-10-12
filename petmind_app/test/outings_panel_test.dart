@@ -92,6 +92,8 @@ void main() {
         ? {'provider': 'grounded-template', 'retrieval_mode': 'local',
             'question': '이번 외출을 요약해 주세요.', 'answer': '과거 기록',
             'claims': [{'text': '과거 근거', 'observation_ids': [99]}],
+             'next_steps': [{'text': '원본을 다시 듣고 의견을 검토해 주세요.',
+               'observation_ids': [99], 'basis_fact_ids': ['current.audio_lstm']}],
             'report': {'comparison': {'status': 'not_requested'}}}
         : path == '/audio-clips' ? []
         : path == '/audio-clips/review-queue' ? {'items': []} : report;
@@ -104,6 +106,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('근거 기반 요약'));
     await tester.pumpAndSettle();
+    expect(find.text('다음 확인 제안'), findsOneWidget);
+    expect(find.text('원본을 다시 듣고 의견을 검토해 주세요.'), findsOneWidget);
     await tester.tap(find.text('근거 #99'));
     await tester.pumpAndSettle();
     expect(evidenceRequests, 1);
@@ -190,7 +194,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('분석 표본'), findsOneWidget);
     expect(find.text('에너지 기반 소리 후보'), findsOneWidget);
-    expect(find.text('음성 LSTM 개 소리 후보'), findsOneWidget);
+    expect(find.text('음성 LSTM 개 짖음 소리 후보'), findsOneWidget);
     expect(find.text('5초'), findsWidgets);
     expect(find.textContaining('외출 기록은 표시 중'), findsOneWidget);
     dayOnline = true;

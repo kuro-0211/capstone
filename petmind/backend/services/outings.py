@@ -90,6 +90,7 @@ def moment(db, row, related=None):
             'event_video': event_info,
             'audio_available': audio_available,
             'audio_url': f'/audio-clips/{audio.id}/player?pet_id=' if audio_available else None,
+            'demo_source': audio_analysis.get('demo_source'),
             'guardian_review': json.loads(audio.review_json) if audio else None,
             'clip_url': f'/outings/observations/{row.id}/clip?pet_id=' if media_available else None,
             'start_s': media.start_s if media else None, 'end_s': media.end_s if media else None,
@@ -225,11 +226,11 @@ def summary_facts(current, scope='이번 외출에 연결된'):
               'observation_ids': ids, 'kind': 'summary'},
              {'id': 'current.unknown', 'text': '카메라는 원본 확인용이며 영상 행동 분석은 수행하지 않습니다.' if current.get('video_role') == 'evidence_only' else f"분석 표본 중 영상 판단 불가는 {current['unknown_seconds']:g}초입니다.",
               'observation_ids': ids, 'kind': 'quality'},
-             {'id': 'current.bark', 'text': f"중복 제외 저장 구간의 에너지 기반 짖음 후보는 {current['bark_candidate_count']}회입니다. 음성 LSTM의 개 소리 감지 창과 다른 지표입니다.",
+             {'id': 'current.bark', 'text': f"중복 제외 저장 구간의 에너지 기반 짖음 후보는 {current['bark_candidate_count']}회입니다. 음성 LSTM의 개 짖음 소리 감지 창과 다른 지표입니다.",
               'observation_ids': ids, 'kind': 'bark'}]
     if current['lstm_analyzed_window_count'] or current['lstm_unavailable_seconds']:
         facts.append({'id': 'current.audio_lstm', 'kind': 'audio_lstm', 'observation_ids': ids,
-            'text': f"음성 LSTM이 분석한 창 {current['lstm_analyzed_window_count']}개 중 개 소리 후보 창은 {current['lstm_dog_window_count']}개입니다. 모델 미준비·실패 구간은 {current['lstm_unavailable_seconds']:g}초입니다. 5초 창은 정확한 발성 횟수가 아닙니다."})
+            'text': f"음성 LSTM이 분석한 창 {current['lstm_analyzed_window_count']}개 중 개 짖음 소리 후보 창은 {current['lstm_dog_window_count']}개입니다. 모델 미준비·실패 구간은 {current['lstm_unavailable_seconds']:g}초입니다. 5초 창은 정확한 발성 횟수가 아닙니다."})
     if current.get('unobserved_seconds') is not None:
         facts.append({'id': 'current.capture_gap', 'kind': 'quality', 'observation_ids': ids,
             'text': f"외출 시간 중 분석되지 않은 시간은 {current['unobserved_seconds']:g}초이며 조용했던 시간으로 해석할 수 없습니다."})
@@ -240,6 +241,10 @@ def summary_facts(current, scope='이번 외출에 연결된'):
     for item in current['moments']:
         facts.append({'id': f"observation.{item['observation_id']}", 'text': item['summary'],
                       'observation_ids': [item['observation_id']], 'kind': 'observation'})
+        if item.get('demo_source'):
+            facts.append({'id': f"scene.{item['observation_id']}", 'kind': 'scene_note',
+                'text': f"관찰 #{item['observation_id']} 공개 시연 음원의 업로드 담당자 입력 설명: {item['demo_source'].rstrip(' .')}. 이 설명은 소리 분류 모델의 판정이나 실제 방문 사실이 아닙니다.",
+                'observation_ids': [item['observation_id']]})
         if item.get('event_video') and item['event_video']['status'] not in {'not_triggered','model_unavailable'}:
             facts.append({'id':f"video.{item['observation_id']}", 'kind':'video',
                           'text':f"관찰 #{item['observation_id']}: {item['note']}",
@@ -328,6 +333,47 @@ def explain_day(report, question, use_gemini=True):
     return narrate(report, facts, question, use_gemini, 'local-day')
 
 
+def next_check_suggestions(report, claims):
+    """Suggest evidence-linked checks, without treating a model score as a diagnosis."""
+    selected = {fact['id'] for fact in claims}
+    if 'current.audio_lstm' not in selected:
+        return []
+    allowed_ids = {oid for fact in claims for oid in fact.get('observation_ids', [])}
+    moments = [item for item in report.get('moments', [])
+               if item.get('included_in_metrics') and item['observation_id'] in allowed_ids]
+    if not moments or not report.get('lstm_analyzed_window_count'):
+        return []
+    ids = [item['observation_id'] for item in moments]
+    basis = ['current.audio_lstm']
+    if len(moments) == 1:
+        review = moments[0].get('guardian_review')
+        review_id = f'guardian.{ids[0]}'
+        if review and review_id in selected:
+            basis.append(review_id)
+            label = review.get('label')
+            detected = report.get('lstm_dog_window_count', 0) > 0
+            if label == 'pet_vocalization' and detected:
+                message = '반려견 소리로 확인한 구간의 전후 상황을 기록하고, 같은 신호가 다음 외출에도 반복되는지 비교해 주세요.'
+            elif label == 'pet_vocalization':
+                message = '확인 의견과 모델 결과가 다릅니다. 원본을 다시 듣고 모델이 놓친 사례인지 검토해 주세요.'
+            elif label == 'uncertain':
+                message = '소리 종류가 아직 불확실합니다. 원본을 다시 듣고 말소리·TV 등 주변 소음을 확인한 뒤 의견을 보완해 주세요.'
+            elif label in {'other', 'external_or_tv'} and not detected:
+                message = '모델은 짖음 후보로 표시하지 않았고 확인 의견은 다른 소리입니다. 이 구간만으로 케어 조치를 권하지 않습니다.'
+            else:
+                message = '모델 결과와 확인 의견이 다릅니다. 원본 구간을 다시 듣고 의견을 검토해 주세요.'
+            return [{'text': message, 'observation_ids': ids, 'basis_fact_ids': basis}]
+        scene_id = f'scene.{ids[0]}'
+        scene = moments[0].get('demo_source') or ''
+        if (scene_id in selected and report.get('lstm_dog_window_count', 0) > 0 and
+                all(term in scene for term in ('초인종', '노크')) and
+                any(term in scene for term in ('뒤', '이후', '다음', '순서대로'))):
+            return [{'text': '입력한 상황 설명에는 초인종·노크 뒤 개 짖음 소리가 이어집니다. 실제 가정에서 비슷한 순서가 관찰되면 현관 영상·방문 기록과 시각을 대조해 주세요. 이 음원만으로 방문자 존재나 짖음의 원인을 확정할 수 없습니다.',
+                     'observation_ids': ids, 'basis_fact_ids': [scene_id, *basis]}]
+    return [{'text': '모델 후보와 원본 소리를 대조하고 확인 의견을 남겨 주세요. 판단이 어려운 구간은 그 상태로 기록해 주세요.',
+             'observation_ids': ids, 'basis_fact_ids': basis}]
+
+
 def narrate(report, facts, question, use_gemini=True, retrieval_mode='local', retrieval_error=None):
     chosen, provider, failure, selection_completed = facts, 'grounded-template', None, False
     if facts and use_gemini and settings.provider == 'gemini' and settings.gemini_api_key:
@@ -376,6 +422,7 @@ def narrate(report, facts, question, use_gemini=True, retrieval_mode='local', re
     return {'report': report, 'question': question, 'provider': provider, 'failure': failure,
             'retrieval_mode': retrieval_mode, 'retrieval_failure': retrieval_error,
             'selection_completed': selection_completed,
-            'claims': chosen, 'retrieved_fact_ids': [f['id'] for f in facts],
+            'claims': chosen, 'next_steps': next_check_suggestions(report, chosen),
+            'retrieved_fact_ids': [f['id'] for f in facts],
             'answer': '\n'.join(f['text'] for f in chosen) if chosen else '질문을 뒷받침할 외출 기록이 부족합니다.',
             'note': 'RAG는 검색된 사실을 선택하며 수치와 문장은 서버가 근거에서 렌더링합니다. 감정·질환·음악 효과를 판정하지 않습니다.'}

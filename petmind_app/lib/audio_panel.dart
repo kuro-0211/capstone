@@ -114,7 +114,7 @@ class _AudioPanelState extends State<AudioPanel> {
     final allowed = widget.outing == null || widget.outing!['input_mode'] == 'uploaded_audio';
     if (!allowed) { setState(() => error = '기존 외출을 종료하고 사용자 음원 모드로 시작해 주세요.'); return; }
     if (publicDemo && publicSource.trim().length < 5) {
-      setState(() => error = '공개 음원의 데이터셋·파일명을 5자 이상 적어 주세요.'); return;
+      setState(() => error = '시연 음원 설명을 5자 이상 적어 주세요.'); return;
     }
     final query = '$petQuery&store_consent=$store&training_consent=$training&retention_days=$retention'
       '${widget.outing == null ? '' : '&outing_id=${widget.outing!['id']}'}'
@@ -174,9 +174,9 @@ class _AudioPanelState extends State<AudioPanel> {
       CheckboxListTile(value: publicDemo, onChanged: busy ? null : (v) => setState(() {
         publicDemo = v!; publicSource = ''; if (publicDemo) training = false;
       }),
-        title: const Text('공개 자료 시연용 음원')),
+        title: const Text('공개·생성 자료 시연용 음원')),
       if (publicDemo) TextField(onChanged: (v) => publicSource = v,
-        decoration: const InputDecoration(labelText: '출처 · 데이터셋/파일명', hintText: '예: ESC-50 / 1-100032-A-0.wav')),
+        decoration: const InputDecoration(labelText: '시연 음원 설명', hintText: '예: 초인종과 노크 뒤 개가 짖는 소리가 들립니다')),
       if (publicDemo) const Text('시연 자료이며 실제 반려견의 장기 관찰이나 모델 학습 정답으로 사용하지 않습니다.'),
       CheckboxListTile(value:store,onChanged:busy ? null : (v) => setState(() { store = v!; if (!store) training = false; }),
         title:Text(publicDemo ? '시연용 기록으로 음원 저장에 동의' : '개인 관찰 기록으로 음원 저장에 동의')),
@@ -210,7 +210,8 @@ class _AudioPanelState extends State<AudioPanel> {
               item['review_priority'] == 'uncertain' ? '확인 권장: 판별 근거가 부족합니다.' : '일반 구간 확인 표본',
               style: TextStyle(color: item['review_priority'] == 'routine_sample'
               ? GenesisTheme.secondaryInk : GenesisTheme.warningInk))),
-          if (model != null) Text('실험 LSTM 개 소리 점수 ${scoreLabel(model['dog_score'])} · 기준 ${scoreLabel(model['threshold'])} (정확도·확률 아님)',
+          if (model?['model_role'] == 'experimental') const Text('실험 후보 모델 · 합성 시연에서만 비교 · 실제 가정 성능 미검증'),
+          if (model != null) Text('LSTM 개 짖음 소리 후보 점수 ${scoreLabel(model['dog_score'])} · 기준 ${scoreLabel(model['threshold'])} (정확도·확률 아님)',
             style: Theme.of(context).textTheme.bodySmall),
           if (model?['windows'] is List && (model['windows'] as List).isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -222,7 +223,7 @@ class _AudioPanelState extends State<AudioPanel> {
               final end = (window['end_s'] as num).toDouble();
               return ListTile(
                 dense: true,
-                title: Text('${start.toStringAsFixed(1)}~${end.toStringAsFixed(1)}초 · ${window['label'] == 'dog_candidate' ? '개 소리 후보' : '기타 소리 후보'}'),
+                title: Text('${start.toStringAsFixed(1)}~${end.toStringAsFixed(1)}초 · ${window['label'] == 'dog_candidate' ? '개 짖음 소리 후보' : '기타 소리 후보'}'),
                 subtitle: Text('모델 점수 ${((window['dog_score'] as num) * 100).toStringAsFixed(1)} / 100 · '
                   '${item['analysis']?['demo_source'] == null ? '보호자' : '시연 담당자'} 확인 ${item['review']?['label'] == null ? '전' : '의견 있음'}'),
                 trailing: TextButton(onPressed: item['audio_available'] == true ? () => play(item, start, end) : null,
